@@ -15,6 +15,7 @@ import StudentJoin from "./pages/portal/StudentJoin.jsx";
 import TeacherClasses from "./pages/portal/TeacherClasses.jsx";
 import TeacherClassDetail from "./pages/portal/TeacherClassDetail.jsx";
 import StudentHome from "./pages/portal/StudentHome.jsx";
+import StudentLearning from "./pages/portal/StudentLearning.jsx";
 
 export default function App() {
   return (
@@ -46,6 +47,14 @@ export default function App() {
           element={
             <RequireRole role="student">
               <StudentHome />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="portal/student/learn"
+          element={
+            <RequireRole role="student">
+              <StudentLearning />
             </RequireRole>
           }
         />

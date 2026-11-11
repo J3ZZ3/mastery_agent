@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { BookOpen, GraduationCap, LogOut, Users } from "lucide-react";
+import { BookOpen, GraduationCap, LogOut, Sparkles, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { Avatar, Badge, Toast } from "./ui.jsx";
@@ -30,7 +30,10 @@ export default function PortalShell() {
 
   const nav = isTeacher
     ? [{ to: "/portal/teacher", label: "Classes", icon: Users, end: true }]
-    : [{ to: "/portal/student/home", label: "My class", icon: BookOpen, end: true }];
+    : [
+        { to: "/portal/student/home", label: "My class", icon: BookOpen, end: true },
+        { to: "/portal/student/learn", label: "Learn", icon: Sparkles, end: true },
+      ];
 
   const handleLogout = async () => {
     const target = isTeacher ? "/portal/teacher/login" : "/portal/student";

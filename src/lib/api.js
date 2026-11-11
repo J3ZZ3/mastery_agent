@@ -83,4 +83,28 @@ export const api = {
   removeStudent: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
   studentClass: () => request("/student/class"),
+  studentProgress: () => request("/student/sessions"),
+  startStudentSession: (body = {}) =>
+    request("/student/sessions", { method: "POST", body: JSON.stringify(body) }),
+  studentSession: (sessionId) => request(`/student/sessions/${sessionId}`),
+  submitStudentDiagnostic: (sessionId, answers) =>
+    request(`/student/sessions/${sessionId}/diagnostic`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    }),
+  checkStudentPractice: (sessionId, questionId, answer) =>
+    request(`/student/sessions/${sessionId}/practice/check`, {
+      method: "POST",
+      body: JSON.stringify({ questionId, answer }),
+    }),
+  submitStudentPractice: (sessionId, answers) =>
+    request(`/student/sessions/${sessionId}/practice`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    }),
+  submitStudentMastery: (sessionId, answers) =>
+    request(`/student/sessions/${sessionId}/mastery`, {
+      method: "POST",
+      body: JSON.stringify({ answers }),
+    }),
 };

@@ -1,26 +1,48 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BookOpen, GraduationCap, KeyRound, Sparkles, Users } from "lucide-react";
+import { ArrowRight, BookOpen, GraduationCap, KeyRound, Sparkles, Target, Users } from "lucide-react";
 import { api } from "../../lib/api.js";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { Alert, Badge, Card, SectionHeading } from "../../components/ui.jsx";
+import { STATUS_META } from "../../lib/constants.js";
+import { Alert, Badge, Card, ProgressBar, SectionHeading } from "../../components/ui.jsx";
 import CopyButton from "../../components/CopyButton.jsx";
+
+const STATUS_COPY = {
+  not_started: "Start with five short diagnostic questions. The agents use your answers to find the gap behind the mistakes.",
+  diagnostic: "Your diagnostic is ready. Answer all five questions to start the six-agent recovery cycle.",
+  analyzing: "The Assessment, Diagnostic and Learning Designer agents are working through your evidence.",
+  learning: "Your personalised lesson and guided practice are ready. Continue where you left off.",
+  retry: "Your adapted lesson is ready. The explanation is slower and the practice questions are fresh.",
+  mastery: "Your mastery check is ready. New questions on the same skill — you need 80% to complete the cycle.",
+  complete_pass: "You met the mastery threshold. Your teacher can now see the evidence and the recommended next step.",
+  complete_support: "The cycle is complete. Your teacher will review the evidence and decide the next step with you.",
+  error: "A step needs attention. Open your learning workspace and restart the cycle.",
+};
 
 export default function StudentHome() {
   const { user, refresh } = useAuth();
   const [data, setData] = useState(
     user ? { student: user.student, class: user.class } : null,
   );
+  const [progress, setProgress] = useState(null);
+  const [progressError, setProgressError] = useState(null);
 
   useEffect(() => {
     let active = true;
-    api
-      .studentClass()
-      .then((result) => {
-        if (active) setData(result);
+    Promise.all([api.studentClass(), api.studentProgress()])
+      .then(([classData, progressData]) => {
+        if (!active) return;
+        setData(classData);
+        setProgress(progressData);
+        setProgressError(null);
       })
       .catch((err) => {
-        if (active && err.status === 401) refresh();
+        if (!active) return;
+        if (err.status === 401) {
+          refresh();
+          return;
+        }
+        setProgressError(err.message || "Could not load your learning progress.");
       });
     return () => {
       active = false;
@@ -30,6 +52,12 @@ export default function StudentHome() {
   const classroom = data?.class;
   const student = data?.student;
   const joinLink = `${window.location.origin}/portal/student`;
+
+  const statusKey = progress?.learner?.status || "not_started";
+  const status = STATUS_META[statusKey] || STATUS_META.not_started;
+  const active = Boolean(progress?.learner?.activeSessionId);
+  const completed = ["complete_pass", "complete_support"].includes(statusKey);
+  const ctaLabel = active ? "Continue learning" : completed ? "Start another cycle" : "Start learning";
 
   return (
     <div className="space-y-7">
@@ -96,30 +124,69 @@ export default function StudentHome() {
         </Card>
 
         <Card className="flex flex-col p-6">
-          <span className="inline-flex w-fit rounded-xl bg-mint-50 p-3 text-mint-700 ring-1 ring-inset ring-mint-200">
-            <Sparkles className="h-6 w-6" aria-hidden="true" />
-          </span>
+          <div className="flex items-start justify-between gap-3">
+            <span className="inline-flex w-fit rounded-xl bg-mint-50 p-3 text-mint-700 ring-1 ring-inset ring-mint-200">
+              <Sparkles className="h-6 w-6" aria-hidden="true" />
+            </span>
+            <Badge tone={status.tone}>{status.label}</Badge>
+          </div>
           <h2 className="mt-4 text-xl font-bold">Your learning cycle</h2>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            Your teacher will assign the diagnostic and intervention. The six agents then find the gap behind
-            your mistakes, build a targeted lesson, coach your practice and check mastery with fresh questions.
+            {STATUS_COPY[statusKey] ||
+              "Your teacher will assign the diagnostic and intervention. The six agents find the gap behind your mistakes, build a targeted lesson, coach your practice and check mastery with fresh questions."}
           </p>
 
-          <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-            <p className="font-semibold">Pilot note</p>
-            <p className="mt-1">
-              Learning sessions are not yet linked to classroom accounts. You can preview the full six-agent
-              flow in the demo workspace; session linking is the next milestone.
-            </p>
-          </div>
+          {progress ? (
+            <div className="mt-5">
+              <ProgressBar
+                value={progress.learner?.progressPercent ?? 0}
+                showValue
+                label="Progress"
+              />
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2">
+                  <p className="font-semibold text-ink-950">
+                    {progress.learner?.initialScore ?? "—"}
+                    {progress.learner?.initialScore !== null && progress.learner?.initialScore !== undefined
+                      ? "%"
+                      : ""}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Diagnostic</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2">
+                  <p className="font-semibold text-ink-950">
+                    {progress.learner?.latestScore ?? "—"}
+                    {progress.learner?.latestScore !== null && progress.learner?.latestScore !== undefined
+                      ? "%"
+                      : ""}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Mastery</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-2">
+                  <p className="font-semibold text-ink-950">{progress.learner?.completedCycles ?? 0}</p>
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Cycles</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {progressError ? (
+            <Alert tone="warning" title="Progress could not load" className="mt-4">
+              {progressError}
+            </Alert>
+          ) : null}
 
           <div className="mt-auto pt-5">
             <Link
-              to="/learner"
+              to="/portal/student/learn"
               className="inline-flex items-center gap-2 rounded-xl bg-ink-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-ink-800"
             >
-              <BookOpen className="h-4 w-4" aria-hidden="true" />
-              Preview the learning workspace
+              {active || completed ? (
+                <Target className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
+              )}
+              {ctaLabel}
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Link>
           </div>

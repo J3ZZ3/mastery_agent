@@ -132,8 +132,8 @@ server/
   validation/        Zod request, agent-output and provider-output schemas
   domain/            diagnostic and mastery question bank, skill labels
   auth/              scrypt credentials, session tokens, cookies, middleware
-  db/                seed.js, store.js (JSON demo), postgres.js, migrations/
-  services/          serialisation (strips answer keys), learner/teacher/classroom
+  db/                seed.js, store.js (JSON demo), classroomSessionRepository.js, postgres.js, migrations/
+  services/          serialisation (strips answer keys), learner/teacher/classroom learning, SSE stream
   routes/            Express API + SSE, teacher auth, classes, student access
   app.js/index.js    HTTP app, migrations and graceful shutdown
 
@@ -141,10 +141,11 @@ src/
   pages/             Overview, LearnerWorkspace, AgentActivity, TeacherDashboard,
                      TeacherLearnerDetail, NotFound
   pages/portal/      PortalLanding, TeacherLogin, TeacherSignup, StudentJoin,
-                     TeacherClasses, TeacherClassDetail, StudentHome
-  components/        AppShell, PortalShell, AuthLayout, RequireRole, AgentTimeline,
-                     Questionnaire, DiagnosisCard, LessonPanel, PracticePanel,
-                     ResultSummary, WorkflowStepper, NumberLine, shared UI primitives
+                     TeacherClasses, TeacherClassDetail, StudentHome, StudentLearning
+  components/        AppShell, PortalShell, AuthLayout, RequireRole, LearningCycle,
+                     AgentTimeline, Questionnaire, DiagnosisCard, LessonPanel,
+                     PracticePanel, ResultSummary, WorkflowStepper, NumberLine,
+                     shared UI primitives
   context/           app boot, learner selection, reset, toasts, classroom auth
   lib/               API client, live SSE hook, formatting, constants
 ```
@@ -225,6 +226,8 @@ DEMO_DELAY_MS=450
 
 The prototype persists to `server/data/db.json` through a small repository layer with a serialised write queue. Set `MASTERY_DATA_DIR` to use another directory (for example a Render disk mount). The file is generated on first boot and gitignored at its default location. Writes use a temporary file and rename; a corrupt database is reported rather than silently overwritten. `npm run reset` or the UI reset action rebuilds the seeded learners, sessions and event history.
 
+Classroom learning sessions are stored in Postgres in `learning_sessions`, not in the JSON file. Each row keeps the full orchestrator snapshot as JSONB plus indexed `class_id`, `student_id`, status, attempt and timestamps. The orchestrator is unchanged: it writes through a four-operation store contract (`findLearner`, `findSession`, `listSessionsForLearner`, `replaceSession`) that both the JSON demo store and the Postgres classroom repository implement.
+
 No Supabase or hosted database is required for the demo, but the default Render filesystem is not durable.
 
 ---
@@ -249,7 +252,7 @@ Default connection string: `postgres://mastery:mastery@localhost:5433/mastery`.
 ### Data model
 
 ```text
-teachers ──< classes ──< students
+teachers ──< classes ──< students ──< learning_sessions
                  │
                  └── auth_sessions (teacher or student principal)
 ```
@@ -257,9 +260,10 @@ teachers ──< classes ──< students
 - `teachers`: email (unique, case-insensitive), name, scrypt password hash.
 - `classes`: name, subject, grade, unique join code, owner (`teacher_id`).
 - `students`: display name (unique per class), scrypt PIN hash, last seen.
+- `learning_sessions`: the orchestrator snapshot as JSONB, plus `class_id`, `student_id`, status, attempt and timestamps for fast queries.
 - `auth_sessions`: hashed random token, role, expiry. The browser only holds the raw token in an `HttpOnly`, `SameSite=Lax` cookie; Postgres stores a SHA-256 hash.
 
-Every teacher route resolves the class through `teacher_id`, so a cross-teacher request returns `404`, not another teacher's data. Student routes only expose the student's own class and profile.
+Every teacher route resolves the class through `teacher_id`, so a cross-teacher request returns `404`, not another teacher's data. Student routes only expose the student's own class, profile and learning sessions.
 
 ### Classroom API
 
@@ -280,6 +284,16 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 | `POST` | `/api/classes/:classId/students/:studentId/pin` | reset a PIN; returns the new PIN once |
 | `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student |
 | `GET` | `/api/student/class` | the signed-in student's class |
+| `GET` | `/api/student/sessions` | the student's progress, current session and history |
+| `POST` | `/api/student/sessions` | start or resume the student's own cycle |
+| `GET` | `/api/student/sessions/:sessionId` | session snapshot (owner only) |
+| `GET` | `/api/student/sessions/:sessionId/events` | **SSE** snapshot + live agent events (owner only) |
+| `POST` | `/api/student/sessions/:sessionId/diagnostic` | run Assessment → Diagnostic → Designer |
+| `POST` | `/api/student/sessions/:sessionId/practice/check` | per-question Tutor check |
+| `POST` | `/api/student/sessions/:sessionId/practice` | evaluate practice + prepare mastery |
+| `POST` | `/api/student/sessions/:sessionId/mastery` | evaluate mastery, adapt or complete |
+
+Classroom sessions are resolved through the signed-in student. Another student's session ID returns `404`, and the student routes ignore any learner ID in the request body.
 
 PINs are hashed with scrypt and can never be read back. If a student loses their PIN, the teacher resets it and reads the new one once.
 
@@ -295,13 +309,14 @@ The classroom pilot has its own frontend, separate from the demo workspace:
 | `/portal/teacher` | teacher | class list, create class, copy class code |
 | `/portal/teacher/classes/:classId` | teacher | roster, add student, one-time PIN, reset PIN, remove student |
 | `/portal/student` | student | join with class code + name + PIN |
-| `/portal/student/home` | student | class card, class code and join link |
+| `/portal/student/home` | student | class card, class code, learning status and start/continue CTA |
+| `/portal/student/learn` | student | the student's own six-agent learning cycle |
 
 The demo workspace remains at `/`, `/learner`, `/activity` and `/teacher`. A **Class pilot** link in the demo sidebar opens `/portal`.
 
-The portal UI was smoke-tested end to end in a headless browser: teacher signup → create class → add student → capture PIN → sign out → student join → student home → sign out.
+The portal UI was smoke-tested end to end in a headless browser: teacher signup → create class → add student → capture PIN → sign out → student join → student home → start diagnostic → intervention → practice → mastery → completed cycle.
 
-Learning sessions are not yet linked to classroom accounts. The student home links to the demo learning workspace and says so explicitly; scoping sessions and events to the signed-in student is the next milestone.
+Classroom learning sessions are linked to the signed-in student and their class. The demo workspace and the classroom portal share the same six-agent orchestrator through a small session-store contract: the demo uses the JSON store, while classroom sessions are persisted in Postgres. The student home shows live status and opens `/portal/student/learn`, which starts or resumes the student's own cycle. Cross-student reads and writes return `404`.
 
 ### Pilot safety notes
 
@@ -344,6 +359,12 @@ demo database. The production client is verified with `npm run build`. A
 browser-level check of the Thabo flow and teacher dashboard is described in
 the demo script above.
 
+With `DATABASE_URL` set, the classroom suite also covers teacher/student auth,
+roster ownership and PIN resets, student session ownership, cross-student
+isolation, starting and resuming a classroom cycle, restarting an active cycle,
+and a full six-agent classroom run persisted against the correct `class_id` and
+`student_id`. Without a database those tests skip and the demo suite still runs.
+
 ---
 
 ## Design principles
@@ -359,6 +380,7 @@ the demo script above.
 ## Known limitations
 
 - The default demo still uses local JSON persistence, which is single-process and intended for a demo, not concurrent production use. The classroom tenancy layer uses Postgres instead.
+- Classroom learning sessions are persisted and scoped to the student, but the teacher portal does not yet surface classroom progress, mastery results or the Teacher Insight summary. Teachers currently see the roster only; a per-class progress view is the next milestone.
 - The demo/learner/teacher routes remain unauthenticated by design. Classroom routes (`/api/auth`, `/api/classes`, `/api/student`) require a session and enforce class ownership, but the original demo switcher is still navigation rather than a security boundary.
 - One topic (`Integers and introductory algebra`) with a small question bank; adding new gaps requires new lesson and mastery sets.
 - Mastery threshold and attempt limit are configuration values; there is no teacher override UI.

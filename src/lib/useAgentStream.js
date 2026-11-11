@@ -3,9 +3,11 @@ import { api } from "./api.js";
 
 /**
  * Combines live SSE with persisted session snapshots in case the stream is
- * buffered or disconnected by a proxy.
+ * buffered or disconnected by a proxy. Classroom routes pass their own
+ * events URL and session loader so the same hook works for both stores.
  */
-export function useAgentStream(sessionId, initialEvents = []) {
+export function useAgentStream(sessionId, initialEvents = [], options = {}) {
+  const { eventsUrl, fetchSession } = options;
   const [events, setEvents] = useState(initialEvents);
   const initialLength = initialEvents.length;
 
@@ -27,7 +29,9 @@ export function useAgentStream(sessionId, initialEvents = []) {
       if (pollInFlight) return;
       pollInFlight = true;
       try {
-        const { session } = await api.session(sessionId);
+        const { session } = fetchSession
+          ? await fetchSession(sessionId)
+          : await api.session(sessionId);
         if (active) mergeEvents(session.events);
         pollFailed = false;
       } catch (error) {
@@ -40,7 +44,7 @@ export function useAgentStream(sessionId, initialEvents = []) {
     const timer = setInterval(poll, 3000);
     const source = typeof EventSource === "undefined"
       ? null
-      : new EventSource(`/api/learning-sessions/${sessionId}/events`);
+      : new EventSource(eventsUrl || `/api/learning-sessions/${sessionId}/events`);
 
     const onSnapshot = (event) => {
       try {
