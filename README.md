@@ -140,10 +140,12 @@ server/
 src/
   pages/             Overview, LearnerWorkspace, AgentActivity, TeacherDashboard,
                      TeacherLearnerDetail, NotFound
-  components/        AppShell, AgentTimeline, Questionnaire, DiagnosisCard,
-                     LessonPanel, PracticePanel, ResultSummary, WorkflowStepper,
-                     NumberLine, shared UI primitives
-  context/           app boot, learner selection, reset, toasts
+  pages/portal/      PortalLanding, TeacherLogin, TeacherSignup, StudentJoin,
+                     TeacherClasses, TeacherClassDetail, StudentHome
+  components/        AppShell, PortalShell, AuthLayout, RequireRole, AgentTimeline,
+                     Questionnaire, DiagnosisCard, LessonPanel, PracticePanel,
+                     ResultSummary, WorkflowStepper, NumberLine, shared UI primitives
+  context/           app boot, learner selection, reset, toasts, classroom auth
   lib/               API client, live SSE hook, formatting, constants
 ```
 
@@ -280,6 +282,26 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 | `GET` | `/api/student/class` | the signed-in student's class |
 
 PINs are hashed with scrypt and can never be read back. If a student loses their PIN, the teacher resets it and reads the new one once.
+
+### Portal UI
+
+The classroom pilot has its own frontend, separate from the demo workspace:
+
+| Route | Who | Purpose |
+| --- | --- | --- |
+| `/portal` | public | choose teacher or student access |
+| `/portal/teacher/login` | teacher | sign in |
+| `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`) |
+| `/portal/teacher` | teacher | class list, create class, copy class code |
+| `/portal/teacher/classes/:classId` | teacher | roster, add student, one-time PIN, reset PIN, remove student |
+| `/portal/student` | student | join with class code + name + PIN |
+| `/portal/student/home` | student | class card, class code and join link |
+
+The demo workspace remains at `/`, `/learner`, `/activity` and `/teacher`. A **Class pilot** link in the demo sidebar opens `/portal`.
+
+The portal UI was smoke-tested end to end in a headless browser: teacher signup → create class → add student → capture PIN → sign out → student join → student home → sign out.
+
+Learning sessions are not yet linked to classroom accounts. The student home links to the demo learning workspace and says so explicitly; scoping sessions and events to the signed-in student is the next milestone.
 
 ### Pilot safety notes
 

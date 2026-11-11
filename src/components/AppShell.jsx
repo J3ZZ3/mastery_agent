@@ -105,6 +105,28 @@ function NavItems({ onNavigate }) {
               </>
             )}
           </NavLink>
+          <NavLink
+            to="/portal"
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              cx(
+                "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+                isActive
+                  ? "bg-white/10 text-white shadow-sm"
+                  : "text-slate-400 hover:bg-white/5 hover:text-slate-100",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <GraduationCap
+                  className={cx("h-4 w-4", isActive ? "text-mint-300" : "text-slate-500 group-hover:text-slate-300")}
+                  aria-hidden="true"
+                />
+                Class pilot
+              </>
+            )}
+          </NavLink>
         </div>
       </div>
     </nav>
@@ -154,7 +176,7 @@ function SidebarContent({ onNavigate, onReset }) {
           Reset demo data
         </button>
         <p className="px-2 text-[10px] leading-4 text-slate-500">
-          Local demo · fictional learners · no sign-in required.
+          Demo workspace · fictional learners. The class pilot has separate teacher and student sign-in.
         </p>
       </div>
     </div>

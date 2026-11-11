@@ -10,6 +10,7 @@ const parseResponse = async (response) => {
 
 async function request(path, options = {}) {
   const response = await fetch(`/api${path}`, {
+    credentials: "include",
     ...options,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -58,4 +59,28 @@ export const api = {
   teacherLearner: (learnerId) => request(`/teacher/learners/${learnerId}`),
   activity: (limit = 80) => request(`/activity?limit=${limit}`),
   resetDemo: () => request("/demo/reset", { method: "POST" }),
+
+  // Classroom pilot
+  me: () => request("/auth/me"),
+  teacherSignup: (body) =>
+    request("/auth/teacher/signup", { method: "POST", body: JSON.stringify(body) }),
+  teacherLogin: (body) =>
+    request("/auth/teacher/login", { method: "POST", body: JSON.stringify(body) }),
+  studentLogin: (body) =>
+    request("/auth/student/login", { method: "POST", body: JSON.stringify(body) }),
+  logout: () => request("/auth/logout", { method: "POST" }),
+  classes: () => request("/classes"),
+  createClass: (body) =>
+    request("/classes", { method: "POST", body: JSON.stringify(body) }),
+  classDetail: (classId) => request(`/classes/${classId}`),
+  updateClass: (classId, body) =>
+    request(`/classes/${classId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  archiveClass: (classId) => request(`/classes/${classId}`, { method: "DELETE" }),
+  addStudent: (classId, body) =>
+    request(`/classes/${classId}/students`, { method: "POST", body: JSON.stringify(body) }),
+  resetStudentPin: (classId, studentId) =>
+    request(`/classes/${classId}/students/${studentId}/pin`, { method: "POST" }),
+  removeStudent: (classId, studentId) =>
+    request(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
+  studentClass: () => request("/student/class"),
 };
