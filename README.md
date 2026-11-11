@@ -131,10 +131,11 @@ server/
   providers/         demoProvider.js, openaiProvider.js, provider status
   validation/        Zod request, agent-output and provider-output schemas
   domain/            diagnostic and mastery question bank, skill labels
-  db/                seed.js, store.js (local JSON persistence)
-  services/          serialisation (strips answer keys), learner/teacher projections
-  routes/            Express API + SSE endpoint
-  app.js/index.js    HTTP app and server bootstrap
+  auth/              scrypt credentials, session tokens, cookies, middleware
+  db/                seed.js, store.js (JSON demo), postgres.js, migrations/
+  services/          serialisation (strips answer keys), learner/teacher/classroom
+  routes/            Express API + SSE, teacher auth, classes, student access
+  app.js/index.js    HTTP app, migrations and graceful shutdown
 
 src/
   pages/             Overview, LearnerWorkspace, AgentActivity, TeacherDashboard,
@@ -226,6 +227,72 @@ No Supabase or hosted database is required for the demo, but the default Render 
 
 ---
 
+## Classroom tenancy (pilot)
+
+The `feat/class-tenancy` work adds a Postgres-backed, per-class tenancy layer next to the JSON demo. One teacher owns one or more classes, and each class has its own roster. Students join with a **class code + display name + 4-digit PIN**; they never need an email address.
+
+The demo routes and JSON store are unchanged. Classroom routes return `503` until `DATABASE_URL` is set, and `npm test` skips the Postgres suite when no database is configured.
+
+### Local setup
+
+```bash
+docker compose up -d          # Postgres 16 on localhost:5433
+cp .env.example .env          # then uncomment DATABASE_URL
+npm run db:migrate
+npm run dev
+```
+
+Default connection string: `postgres://mastery:mastery@localhost:5433/mastery`.
+
+### Data model
+
+```text
+teachers ──< classes ──< students
+                 │
+                 └── auth_sessions (teacher or student principal)
+```
+
+- `teachers`: email (unique, case-insensitive), name, scrypt password hash.
+- `classes`: name, subject, grade, unique join code, owner (`teacher_id`).
+- `students`: display name (unique per class), scrypt PIN hash, last seen.
+- `auth_sessions`: hashed random token, role, expiry. The browser only holds the raw token in an `HttpOnly`, `SameSite=Lax` cookie; Postgres stores a SHA-256 hash.
+
+Every teacher route resolves the class through `teacher_id`, so a cross-teacher request returns `404`, not another teacher's data. Student routes only expose the student's own class and profile.
+
+### Classroom API
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/teacher/signup` | create a teacher account and session |
+| `POST` | `/api/auth/teacher/login` | teacher sign-in |
+| `POST` | `/api/auth/student/login` | class code + name + PIN |
+| `POST` | `/api/auth/logout` | delete the session and clear the cookie |
+| `GET` | `/api/auth/me` | current teacher or student principal |
+| `GET` | `/api/classes` | teacher's active classes with student counts |
+| `POST` | `/api/classes` | create a class and join code |
+| `GET` | `/api/classes/:classId` | class + roster (owner only) |
+| `PATCH` | `/api/classes/:classId` | rename or change subject/grade |
+| `DELETE` | `/api/classes/:classId` | archive a class |
+| `GET` | `/api/classes/:classId/students` | roster without PINs |
+| `POST` | `/api/classes/:classId/students` | add a student; returns the PIN **once** |
+| `POST` | `/api/classes/:classId/students/:studentId/pin` | reset a PIN; returns the new PIN once |
+| `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student |
+| `GET` | `/api/student/class` | the signed-in student's class |
+
+PINs are hashed with scrypt and can never be read back. If a student loses their PIN, the teacher resets it and reads the new one once.
+
+### Pilot safety notes
+
+- Student sessions expire after `STUDENT_SESSION_HOURS` (default 12) because devices may be shared. Teacher sessions last `SESSION_TTL_DAYS` (default 30).
+- Set `CORS_ORIGINS` to the exact frontend origins in production. Requests with no `Origin` (server-to-server, curl) are allowed.
+- Set `SESSION_COOKIE_SECURE=true` in production (it defaults to true when `NODE_ENV=production`).
+- `TEACHER_SIGNUP_OPEN=false` closes public teacher registration once the pilot cohort is enrolled.
+- Auth endpoints are rate-limited per IP and path. The limiter is in-memory, so use Redis before running more than one API instance.
+- A 4-digit PIN has 10,000 combinations. The rate limiter is the main brute-force control for a pilot; add a per-student lockout or longer PIN before a wider rollout.
+- For POPIA, keep student data minimal (display name only), publish a privacy notice, and obtain guardian consent before using real learner data. The AI provider receives workflow content when `AI_PROVIDER=openai`; review that data flow before a real pilot.
+
+---
+
 ## Verification
 
 ```bash
@@ -269,8 +336,8 @@ the demo script above.
 
 ## Known limitations
 
-- Local JSON persistence is single-process and intended for a demo, not concurrent production use.
-- No authentication, authorisation or multi-tenancy. The learner/teacher switcher is navigation, not a security boundary.
+- The default demo still uses local JSON persistence, which is single-process and intended for a demo, not concurrent production use. The classroom tenancy layer uses Postgres instead.
+- The demo/learner/teacher routes remain unauthenticated by design. Classroom routes (`/api/auth`, `/api/classes`, `/api/student`) require a session and enforce class ownership, but the original demo switcher is still navigation rather than a security boundary.
 - One topic (`Integers and introductory algebra`) with a small question bank; adding new gaps requires new lesson and mastery sets.
 - Mastery threshold and attempt limit are configuration values; there is no teacher override UI.
 - The deterministic demo provider does not call a language model. The OpenAI mode depends on an external model and deliberately falls back on any failure, so output quality varies with the model.

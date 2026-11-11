@@ -11,7 +11,49 @@ export const GAP_KEYS = [
 const idSchema = z.string().min(1);
 const optionSchema = z.array(z.string().min(1)).min(2);
 
+const personName = z.string().trim().min(1).max(80);
+const className = z.string().trim().min(2).max(80);
+const subjectName = z.string().trim().min(1).max(80);
+const gradeLevel = z.number().int().min(1).max(12).nullable();
+
 export const requestSchemas = {
+  teacherSignup: z.object({
+    email: z.string().trim().email().max(200),
+    name: personName,
+    password: z.string().min(8).max(200),
+  }),
+  teacherLogin: z.object({
+    email: z.string().trim().email().max(200),
+    password: z.string().min(1).max(200),
+  }),
+  studentLogin: z.object({
+    joinCode: z
+      .string()
+      .trim()
+      .min(4)
+      .max(12)
+      .regex(/^[A-Za-z0-9]+$/, "Use the class code your teacher gave you."),
+    displayName: personName,
+    pin: z.string().regex(/^\d{4}$/, "Enter your 4-digit PIN."),
+  }),
+  createClass: z.object({
+    name: className,
+    subject: subjectName.optional().default("Mathematics"),
+    grade: gradeLevel.optional().default(null),
+  }),
+  updateClass: z
+    .object({
+      name: className,
+      subject: subjectName,
+      grade: gradeLevel,
+    })
+    .partial()
+    .refine((value) => Object.keys(value).length > 0, {
+      message: "Provide at least one field to update.",
+    }),
+  addStudent: z.object({
+    displayName: personName,
+  }),
   createSession: z.object({
     learnerId: idSchema,
     restart: z.boolean().optional().default(false),

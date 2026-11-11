@@ -1,9 +1,14 @@
 import { Router } from "express";
 import { findSession, resetDb, getDb } from "../db/store.js";
 import { AppError } from "../lib/errors.js";
+import { asyncRoute } from "../lib/asyncRoute.js";
+import { parseBody } from "../lib/parseBody.js";
 import { requestSchemas } from "../validation/schemas.js";
 import { providerStatus } from "../providers/index.js";
 import { config } from "../config.js";
+import { databaseConfigured } from "../db/postgres.js";
+import { authRouter } from "./auth.js";
+import { classesRouter, studentRouter } from "./classes.js";
 import {
   createLearningSession,
   submitDiagnostic,
@@ -18,22 +23,9 @@ import { serializeSession } from "../services/serialize.js";
 
 export const apiRouter = Router();
 
-const parseBody = (schema, body, label) => {
-  const result = schema.safeParse(body);
-  if (!result.success) {
-    throw new AppError(
-      400,
-      `Invalid ${label} request.`,
-      result.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
-    );
-  }
-  return result.data;
-};
-
-const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
+apiRouter.use("/auth", authRouter);
+apiRouter.use("/classes", classesRouter);
+apiRouter.use("/student", studentRouter);
 
 apiRouter.get(
   "/health",
@@ -43,6 +35,7 @@ apiRouter.get(
       status: "ok",
       app: "MASTERY",
       provider: providerStatus(),
+      database: databaseConfigured() ? "postgres" : "json-demo",
       threshold: config.masteryThreshold,
       maxAttempts: config.maxAttempts,
       learners: db.learners.length,
