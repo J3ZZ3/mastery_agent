@@ -58,6 +58,9 @@ export const requestSchemas = {
     learnerId: idSchema,
     restart: z.boolean().optional().default(false),
   }),
+  startClassroomSession: z.object({
+    restart: z.boolean().optional().default(false),
+  }),
   diagnostic: z.object({
     answers: z.record(z.string().min(1)),
   }),

@@ -1,5 +1,5 @@
 import { config } from "../config.js";
-import { getDb, findLearner, findSession, replaceSession } from "../db/store.js";
+import * as demoStore from "../db/store.js";
 import { diagnosticQuestions } from "../domain/questions.js";
 import { newId, nowIso } from "../lib/id.js";
 import { AppError } from "../lib/errors.js";
@@ -16,7 +16,19 @@ import { ACTIVE_STATUSES, demoDiagnosticAnswerFor, demoMasteryAnswerFor } from "
 const ai = getAiProvider();
 const latency = config.demoDelayMs;
 
-async function recordEvent(session, { agent, status, message, summary = "", attempt = session.attempt, durationMs = null, provider = null }) {
+/**
+ * The orchestrator writes through a small store contract so the JSON demo and
+ * Postgres classroom sessions can share the same agent workflow:
+ * findLearner, findSession, listSessionsForLearner and replaceSession.
+ */
+export const demoSessionStore = {
+  findLearner: demoStore.findLearner,
+  findSession: demoStore.findSession,
+  listSessionsForLearner: demoStore.listSessionsForLearner,
+  replaceSession: demoStore.replaceSession,
+};
+
+async function recordEvent(session, { agent, status, message, summary = "", attempt = session.attempt, durationMs = null, provider = null }, store) {
   const at = nowIso();
   const event = {
     id: newId("evt"),
@@ -34,13 +46,14 @@ async function recordEvent(session, { agent, status, message, summary = "", atte
   session.updatedAt = at;
   session.lastActivityAt = at;
 
-  await replaceSession(session);
+  await store.replaceSession(session);
   publishSessionEvent(session.id, event);
   return event;
 }
 
 async function trackAgent({
   session,
+  store,
   agent,
   attempt,
   startMessage,
@@ -50,7 +63,7 @@ async function trackAgent({
   summary,
 }) {
   const startedAt = Date.now();
-  await recordEvent(session, { agent, status: "started", message: startMessage, attempt });
+  await recordEvent(session, { agent, status: "started", message: startMessage, attempt }, store);
 
   try {
     const result = await run();
@@ -64,7 +77,7 @@ async function trackAgent({
       attempt,
       durationMs,
       provider: result.meta?.provider || null,
-    });
+    }, store);
     return result;
   } catch (error) {
     await recordEvent(session, {
@@ -74,16 +87,16 @@ async function trackAgent({
       summary: error.message,
       attempt,
       durationMs: Date.now() - startedAt,
-    });
+    }, store);
     throw error;
   }
 }
 
-async function markError(session, error) {
+async function markError(session, error, store) {
   session.status = "error";
   session.error = error.message;
   session.updatedAt = nowIso();
-  await replaceSession(session);
+  await store.replaceSession(session);
 }
 
 const assessmentSummary = (data) =>
@@ -122,14 +135,13 @@ function validateAllAnswered(questions, answers, label) {
   }
 }
 
-export async function createLearningSession({ learnerId, restart = false }) {
-  const learner = await findLearner(learnerId);
+export async function createLearningSession({ learnerId, restart = false }, store = demoSessionStore) {
+  const learner = await store.findLearner(learnerId);
   if (!learner) {
     throw new AppError(404, "Learner not found.");
   }
 
-  const db = await getDb();
-  const sessions = db.sessions.filter((session) => session.learnerId === learnerId);
+  const sessions = await store.listSessionsForLearner(learnerId);
   const active = sessions.find((session) => ACTIVE_STATUSES.includes(session.status));
 
   if (active && !restart) {
@@ -139,7 +151,7 @@ export async function createLearningSession({ learnerId, restart = false }) {
   if (active && restart) {
     active.status = "abandoned";
     active.updatedAt = nowIso();
-    await replaceSession(active);
+    await store.replaceSession(active);
   }
 
   const demoMode = Boolean(learner.isDemo);
@@ -152,6 +164,7 @@ export async function createLearningSession({ learnerId, restart = false }) {
   const session = {
     id: newId("ses"),
     learnerId,
+    ...(learner.classId ? { classId: learner.classId } : {}),
     status: "diagnostic",
     attempt: 0,
     threshold: config.masteryThreshold,
@@ -173,12 +186,12 @@ export async function createLearningSession({ learnerId, restart = false }) {
     error: null,
   };
 
-  await replaceSession(session);
+  await store.replaceSession(session);
   return { session, learner, resumed: false };
 }
 
-export async function submitDiagnostic(sessionId, answers) {
-  const session = await findSession(sessionId);
+export async function submitDiagnostic(sessionId, answers, store = demoSessionStore) {
+  const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
   if (session.diagnostic.report) return session;
   if (session.status !== "diagnostic") {
@@ -191,11 +204,12 @@ export async function submitDiagnostic(sessionId, answers) {
   session.diagnostic.submittedAt = nowIso();
   session.status = "analyzing";
   session.updatedAt = nowIso();
-  await replaceSession(session);
+  await store.replaceSession(session);
 
   try {
     await trackAgent({
       session,
+      store,
       agent: "assessment",
       attempt: 1,
       startMessage: "Analysing the submitted diagnostic answers.",
@@ -215,6 +229,7 @@ export async function submitDiagnostic(sessionId, answers) {
 
     await trackAgent({
       session,
+      store,
       agent: "diagnostic",
       attempt: 1,
       startMessage: "Looking for a prerequisite gap behind the errors.",
@@ -233,6 +248,7 @@ export async function submitDiagnostic(sessionId, answers) {
 
     await trackAgent({
       session,
+      store,
       agent: "designer",
       attempt: 1,
       startMessage: "Designing a personalised intervention.",
@@ -253,16 +269,16 @@ export async function submitDiagnostic(sessionId, answers) {
 
     session.status = "learning";
     session.updatedAt = nowIso();
-    await replaceSession(session);
+    await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error);
+    await markError(session, error, store);
     throw error;
   }
 }
 
-export async function checkPractice(sessionId, { questionId, answer }) {
-  const session = await findSession(sessionId);
+export async function checkPractice(sessionId, { questionId, answer }, store = demoSessionStore) {
+  const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
   if (!["learning", "retry"].includes(session.status)) {
     throw new AppError(409, "Practice is not open for this session.");
@@ -282,7 +298,7 @@ export async function checkPractice(sessionId, { questionId, answer }) {
       status: "started",
       message: "Guiding the learner through the lesson and practice.",
       attempt: attempt.attempt,
-    });
+    }, store);
   }
 
   attempt.practice.answers[questionId] = answer;
@@ -294,7 +310,7 @@ export async function checkPractice(sessionId, { questionId, answer }) {
     message: `Checked practice item ${question.id.toUpperCase()}.`,
     summary: check.correct ? "Correct · feedback delivered" : "Incorrect · hint offered",
     attempt: attempt.attempt,
-  });
+  }, store);
 
   return {
     check,
@@ -303,8 +319,8 @@ export async function checkPractice(sessionId, { questionId, answer }) {
   };
 }
 
-export async function submitPractice(sessionId, answers) {
-  const session = await findSession(sessionId);
+export async function submitPractice(sessionId, answers, store = demoSessionStore) {
+  const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
   if (!["learning", "retry"].includes(session.status)) {
     throw new AppError(409, "Practice is not open for this session.");
@@ -324,12 +340,13 @@ export async function submitPractice(sessionId, answers) {
       status: "started",
       message: "Guiding the learner through the lesson and practice.",
       attempt: attempt.attempt,
-    });
+    }, store);
   }
 
   try {
     await trackAgent({
       session,
+      store,
       agent: "tutor",
       attempt: attempt.attempt,
       startMessage: "Reviewing the completed practice set.",
@@ -350,6 +367,7 @@ export async function submitPractice(sessionId, answers) {
 
     await trackAgent({
       session,
+      store,
       agent: "mastery",
       attempt: attempt.attempt,
       startMessage: "Preparing a fresh follow-up assessment.",
@@ -381,16 +399,16 @@ export async function submitPractice(sessionId, answers) {
 
     session.status = "mastery";
     session.updatedAt = nowIso();
-    await replaceSession(session);
+    await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error);
+    await markError(session, error, store);
     throw error;
   }
 }
 
-export async function submitMastery(sessionId, answers) {
-  const session = await findSession(sessionId);
+export async function submitMastery(sessionId, answers, store = demoSessionStore) {
+  const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
   if (session.status !== "mastery") {
     throw new AppError(409, "The mastery assessment is not open for this session.");
@@ -409,6 +427,7 @@ export async function submitMastery(sessionId, answers) {
     let masteryResult;
     await trackAgent({
       session,
+      store,
       agent: "mastery",
       attempt: attempt.attempt,
       startMessage: "Evaluating the follow-up answers against the threshold.",
@@ -430,13 +449,14 @@ export async function submitMastery(sessionId, answers) {
       summary: masteryResultSummary,
     });
 
-    const learner = await findLearner(session.learnerId);
+    const learner = await store.findLearner(session.learnerId);
     const passed = Boolean(masteryResult?.thresholdMet);
     const exhausted = attempt.attempt >= config.maxAttempts;
 
     if (passed || exhausted) {
       await trackAgent({
         session,
+        store,
         agent: "insight",
         attempt: attempt.attempt,
         startMessage: "Converting the completed cycle into a teacher summary.",
@@ -460,6 +480,7 @@ export async function submitMastery(sessionId, answers) {
       const nextAttempt = attempt.attempt + 1;
       await trackAgent({
         session,
+        store,
         agent: "designer",
         attempt: nextAttempt,
         startMessage: "Adapting the intervention from the remaining difficulty.",
@@ -485,10 +506,10 @@ export async function submitMastery(sessionId, answers) {
 
     session.updatedAt = nowIso();
     session.lastActivityAt = nowIso();
-    await replaceSession(session);
+    await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error);
+    await markError(session, error, store);
     throw error;
   }
 }

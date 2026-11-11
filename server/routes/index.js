@@ -16,10 +16,10 @@ import {
   submitPractice,
   submitMastery,
 } from "../orchestration/learningRecoveryOrchestrator.js";
-import { subscribeToSession } from "../orchestration/eventBus.js";
 import { listLearners, getLearnerProgress, getLearnerState } from "../services/learnerService.js";
 import { getTeacherOverview, getTeacherLearners, getTeacherLearner, getActivity } from "../services/teacherService.js";
 import { serializeSession } from "../services/serialize.js";
+import { openSessionEventStream } from "../services/sessionStream.js";
 
 export const apiRouter = Router();
 
@@ -91,36 +91,7 @@ apiRouter.get("/learning-sessions/:id/events", async (req, res, next) => {
   try {
     const session = await findSession(req.params.id);
     if (!session) throw new AppError(404, "Learning session not found.");
-
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-
-    res.write("retry: 3000\n\n");
-    res.write(
-      `event: snapshot\ndata: ${JSON.stringify({
-        sessionId: session.id,
-        sessionStatus: session.status,
-        events: [...session.events].sort((a, b) => new Date(a.at) - new Date(b.at)),
-      })}\n\n`,
-    );
-
-    const unsubscribe = subscribeToSession(session.id, (event) => {
-      res.write(`event: agent-event\ndata: ${JSON.stringify(event)}\n\n`);
-    });
-
-    const keepAlive = setInterval(() => {
-      res.write(": keep-alive\n\n");
-    }, 15000);
-
-    req.on("close", () => {
-      clearInterval(keepAlive);
-      unsubscribe();
-      res.end();
-    });
+    openSessionEventStream(req, res, session);
   } catch (error) {
     next(error);
   }

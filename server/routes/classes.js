@@ -15,6 +15,17 @@ import {
   resetStudentPin,
   updateClass,
 } from "../services/classroomService.js";
+import {
+  checkStudentPractice,
+  getStudentLearningProgress,
+  getStudentLearningSession,
+  requireStudentSession,
+  startStudentLearningSession,
+  submitStudentDiagnostic,
+  submitStudentMastery,
+  submitStudentPractice,
+} from "../services/classroomLearningService.js";
+import { openSessionEventStream } from "../services/sessionStream.js";
 
 /* ------------------------------ teacher ------------------------------ */
 
@@ -110,5 +121,87 @@ studentRouter.get(
   "/class",
   asyncRoute(async (req, res) => {
     res.json(await getStudentClass(req.auth.student.id));
+  }),
+);
+
+const studentId = (req) => req.auth.student.id;
+
+studentRouter.get(
+  "/sessions",
+  asyncRoute(async (req, res) => {
+    res.json(await getStudentLearningProgress(studentId(req)));
+  }),
+);
+
+studentRouter.post(
+  "/sessions",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.startClassroomSession, req.body ?? {}, "session");
+    const result = await startStudentLearningSession(studentId(req), body);
+    res.status(result.resumed ? 200 : 201).json(result);
+  }),
+);
+
+studentRouter.get(
+  "/sessions/:sessionId",
+  asyncRoute(async (req, res) => {
+    res.json(await getStudentLearningSession(studentId(req), req.params.sessionId));
+  }),
+);
+
+studentRouter.get("/sessions/:sessionId/events", async (req, res, next) => {
+  try {
+    const session = await requireStudentSession(studentId(req), req.params.sessionId);
+    openSessionEventStream(req, res, session);
+  } catch (error) {
+    next(error);
+  }
+});
+
+studentRouter.post(
+  "/sessions/:sessionId/diagnostic",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.diagnostic, req.body, "diagnostic");
+    const result = await submitStudentDiagnostic(
+      studentId(req),
+      req.params.sessionId,
+      body.answers,
+    );
+    res.json(result);
+  }),
+);
+
+studentRouter.post(
+  "/sessions/:sessionId/practice/check",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.practiceCheck, req.body, "practice check");
+    const result = await checkStudentPractice(studentId(req), req.params.sessionId, body);
+    res.json(result);
+  }),
+);
+
+studentRouter.post(
+  "/sessions/:sessionId/practice",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.practice, req.body, "practice");
+    const result = await submitStudentPractice(
+      studentId(req),
+      req.params.sessionId,
+      body.answers,
+    );
+    res.json(result);
+  }),
+);
+
+studentRouter.post(
+  "/sessions/:sessionId/mastery",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.mastery, req.body, "mastery");
+    const result = await submitStudentMastery(
+      studentId(req),
+      req.params.sessionId,
+      body.answers,
+    );
+    res.json(result);
   }),
 );
