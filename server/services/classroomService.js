@@ -132,7 +132,7 @@ export async function listClasses(teacherId) {
   return rows.map(classDto);
 }
 
-async function requireOwnedClass(teacherId, classId) {
+export async function requireOwnedClass(teacherId, classId) {
   const { rows } = await query(
     "select * from classes where id = $1 and teacher_id = $2",
     [classId, teacherId],
@@ -189,6 +189,18 @@ export async function listStudents(teacherId, classId) {
     [classId],
   );
   return rows.map(studentDto);
+}
+
+export async function getStudent(teacherId, classId, studentId) {
+  await requireOwnedClass(teacherId, classId);
+  const { rows } = await query(
+    `select id, class_id, display_name, created_at, last_seen_at
+     from students
+     where id = $1 and class_id = $2`,
+    [studentId, classId],
+  );
+  if (!rows[0]) throw new AppError(404, "Student not found in this class.");
+  return studentDto(rows[0]);
 }
 
 export async function addStudent(teacherId, classId, { displayName }) {

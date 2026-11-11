@@ -26,6 +26,10 @@ import {
   submitStudentPractice,
 } from "../services/classroomLearningService.js";
 import { openSessionEventStream } from "../services/sessionStream.js";
+import {
+  getClassProgress,
+  getClassStudentProgress,
+} from "../services/classroomProgressService.js";
 
 /* ------------------------------ teacher ------------------------------ */
 
@@ -79,6 +83,26 @@ classesRouter.get(
   "/:classId/students",
   asyncRoute(async (req, res) => {
     res.json({ students: await listStudents(teacherId(req), req.params.classId) });
+  }),
+);
+
+classesRouter.get(
+  "/:classId/progress",
+  asyncRoute(async (req, res) => {
+    res.json(await getClassProgress(teacherId(req), req.params.classId));
+  }),
+);
+
+classesRouter.get(
+  "/:classId/students/:studentId/progress",
+  asyncRoute(async (req, res) => {
+    res.json(
+      await getClassStudentProgress(
+        teacherId(req),
+        req.params.classId,
+        req.params.studentId,
+      ),
+    );
   }),
 );
 

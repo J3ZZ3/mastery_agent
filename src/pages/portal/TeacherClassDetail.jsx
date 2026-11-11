@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
+  Activity,
+  AlertTriangle,
   ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
   KeyRound,
   Link2,
   Plus,
@@ -13,7 +17,8 @@ import {
 import { api } from "../../lib/api.js";
 import { useApp } from "../../context/AppContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
-import { formatDate, relativeTime } from "../../lib/format.js";
+import { STATUS_META } from "../../lib/constants.js";
+import { formatDate, percent, relativeTime } from "../../lib/format.js";
 import {
   Alert,
   Avatar,
@@ -24,6 +29,7 @@ import {
   Modal,
   SectionHeading,
   Spinner,
+  StatCard,
 } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
 import CopyButton from "../../components/CopyButton.jsx";
@@ -34,6 +40,7 @@ export default function TeacherClassDetail() {
   const { refresh } = useAuth();
 
   const [data, setData] = useState(null);
+  const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -51,7 +58,12 @@ export default function TeacherClassDetail() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setData(await api.classDetail(classId));
+      const [classroom, classProgress] = await Promise.all([
+        api.classDetail(classId),
+        api.classProgress(classId),
+      ]);
+      setData(classroom);
+      setProgress(classProgress);
       setError(null);
     } catch (err) {
       if (err.status === 401) {
@@ -162,6 +174,8 @@ export default function TeacherClassDetail() {
   const classroom = data.class;
   const students = data.students;
   const joinLink = `${window.location.origin}/portal/student`;
+  const progressById = new Map((progress?.students || []).map((item) => [item.id, item]));
+  const stats = progress?.stats;
 
   return (
     <div className="space-y-7">
@@ -212,9 +226,42 @@ export default function TeacherClassDetail() {
         </div>
       </Card>
 
+      {stats ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Students"
+            value={stats.totalStudents}
+            hint={`${stats.notStarted} not started`}
+            icon={Users}
+            tone="sky"
+          />
+          <StatCard
+            label="Active now"
+            value={stats.activeStudents}
+            hint="In a diagnostic, lesson or mastery check"
+            icon={Activity}
+            tone="mint"
+          />
+          <StatCard
+            label="Recovered"
+            value={stats.recovered}
+            hint={`${stats.masteryRecovery}% of completed cycles met the threshold`}
+            icon={CheckCircle2}
+            tone="mint"
+          />
+          <StatCard
+            label="Needs support"
+            value={stats.needsSupport}
+            hint="Review the evidence and recommend a next step"
+            icon={AlertTriangle}
+            tone="amber"
+          />
+        </div>
+      ) : null}
+
       <SectionHeading
         title={`Roster · ${students.length}`}
-        description="Each student gets a one-time PIN. If they lose it, reset the PIN and give them the new one."
+        description="Each student gets a one-time PIN. Open a student to see their diagnosis, mastery result and Teacher Insight."
         action={
           <Button variant="secondary" icon={Plus} onClick={() => setAddOpen(true)}>
             Add student
@@ -236,46 +283,64 @@ export default function TeacherClassDetail() {
       ) : (
         <Card className="overflow-hidden">
           <ul className="divide-y divide-slate-200">
-            {students.map((student) => (
-              <li
-                key={student.id}
-                className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-5"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar name={student.displayName} accent="sky" size="sm" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-ink-950">{student.displayName}</p>
-                    <p className="text-[11px] text-slate-500">
-                      Added {formatDate(student.createdAt)} ·{" "}
-                      {student.lastSeenAt ? `Last seen ${relativeTime(student.lastSeenAt)}` : "Never signed in"}
-                    </p>
+            {students.map((student) => {
+              const state = progressById.get(student.id);
+              const status = state ? STATUS_META[state.status] || STATUS_META.not_started : null;
+              return (
+                <li
+                  key={student.id}
+                  className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-5"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar name={student.displayName} accent="sky" size="sm" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-ink-950">{student.displayName}</p>
+                      <p className="text-[11px] text-slate-500">
+                        Added {formatDate(student.createdAt)} ·{" "}
+                        {student.lastSeenAt ? `Last seen ${relativeTime(student.lastSeenAt)}` : "Never signed in"}
+                        {state?.latestScore !== null && state?.latestScore !== undefined
+                          ? ` · Mastery ${percent(state.latestScore)}`
+                          : ""}
+                      </p>
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone={student.lastSeenAt ? "mint" : "slate"}>
-                    {student.lastSeenAt ? "Active" : "Not joined"}
-                  </Badge>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    icon={KeyRound}
-                    loading={resettingId === student.id}
-                    onClick={() => resetPin(student)}
-                  >
-                    Reset PIN
-                  </Button>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    icon={Trash2}
-                    onClick={() => setRemoveTarget(student)}
-                  >
-                    Remove
-                  </Button>
-                </div>
-              </li>
-            ))}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {status ? (
+                      <Badge tone={status.tone}>{status.label}</Badge>
+                    ) : (
+                      <Badge tone={student.lastSeenAt ? "mint" : "slate"}>
+                        {student.lastSeenAt ? "Active" : "Not joined"}
+                      </Badge>
+                    )}
+                    <Link
+                      to={`/portal/teacher/classes/${classId}/students/${student.id}`}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      View progress
+                      <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={KeyRound}
+                      loading={resettingId === student.id}
+                      onClick={() => resetPin(student)}
+                    >
+                      Reset PIN
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={Trash2}
+                      onClick={() => setRemoveTarget(student)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </Card>
       )}

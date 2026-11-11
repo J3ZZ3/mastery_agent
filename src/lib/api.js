@@ -73,6 +73,9 @@ export const api = {
   createClass: (body) =>
     request("/classes", { method: "POST", body: JSON.stringify(body) }),
   classDetail: (classId) => request(`/classes/${classId}`),
+  classProgress: (classId) => request(`/classes/${classId}/progress`),
+  classStudentProgress: (classId, studentId) =>
+    request(`/classes/${classId}/students/${studentId}/progress`),
   updateClass: (classId, body) =>
     request(`/classes/${classId}`, { method: "PATCH", body: JSON.stringify(body) }),
   archiveClass: (classId) => request(`/classes/${classId}`, { method: "DELETE" }),

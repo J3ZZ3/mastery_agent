@@ -133,7 +133,7 @@ server/
   domain/            diagnostic and mastery question bank, skill labels
   auth/              scrypt credentials, session tokens, cookies, middleware
   db/                seed.js, store.js (JSON demo), classroomSessionRepository.js, postgres.js, migrations/
-  services/          serialisation (strips answer keys), learner/teacher/classroom learning, SSE stream
+  services/          serialisation (strips answer keys), learner/teacher/classroom learning, progress, SSE stream
   routes/            Express API + SSE, teacher auth, classes, student access
   app.js/index.js    HTTP app, migrations and graceful shutdown
 
@@ -141,11 +141,12 @@ src/
   pages/             Overview, LearnerWorkspace, AgentActivity, TeacherDashboard,
                      TeacherLearnerDetail, NotFound
   pages/portal/      PortalLanding, TeacherLogin, TeacherSignup, StudentJoin,
-                     TeacherClasses, TeacherClassDetail, StudentHome, StudentLearning
+                     TeacherClasses, TeacherClassDetail, ClassroomStudentProgress,
+                     StudentHome, StudentLearning
   components/        AppShell, PortalShell, AuthLayout, RequireRole, LearningCycle,
                      AgentTimeline, Questionnaire, DiagnosisCard, LessonPanel,
                      PracticePanel, ResultSummary, WorkflowStepper, NumberLine,
-                     shared UI primitives
+                     AttemptCard, TeacherInsightPanel, shared UI primitives
   context/           app boot, learner selection, reset, toasts, classroom auth
   lib/               API client, live SSE hook, formatting, constants
 ```
@@ -280,6 +281,8 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 | `PATCH` | `/api/classes/:classId` | rename or change subject/grade |
 | `DELETE` | `/api/classes/:classId` | archive a class |
 | `GET` | `/api/classes/:classId/students` | roster without PINs |
+| `GET` | `/api/classes/:classId/progress` | class stats + per-student learning status (owner only) |
+| `GET` | `/api/classes/:classId/students/:studentId/progress` | one student's current cycle, mastery result and Teacher Insight (owner only) |
 | `POST` | `/api/classes/:classId/students` | add a student; returns the PIN **once** |
 | `POST` | `/api/classes/:classId/students/:studentId/pin` | reset a PIN; returns the new PIN once |
 | `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student |
@@ -307,16 +310,19 @@ The classroom pilot has its own frontend, separate from the demo workspace:
 | `/portal/teacher/login` | teacher | sign in |
 | `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`) |
 | `/portal/teacher` | teacher | class list, create class, copy class code |
-| `/portal/teacher/classes/:classId` | teacher | roster, add student, one-time PIN, reset PIN, remove student |
+| `/portal/teacher/classes/:classId` | teacher | roster, class progress stats, add student, one-time PIN, reset PIN, remove student |
+| `/portal/teacher/classes/:classId/students/:studentId` | teacher | one student's diagnosis, mastery result and Teacher Insight |
 | `/portal/student` | student | join with class code + name + PIN |
 | `/portal/student/home` | student | class card, class code, learning status and start/continue CTA |
 | `/portal/student/learn` | student | the student's own six-agent learning cycle |
 
 The demo workspace remains at `/`, `/learner`, `/activity` and `/teacher`. A **Class pilot** link in the demo sidebar opens `/portal`.
 
-The portal UI was smoke-tested end to end in a headless browser: teacher signup → create class → add student → capture PIN → sign out → student join → student home → start diagnostic → intervention → practice → mastery → completed cycle.
+The portal UI was smoke-tested end to end in a headless browser: teacher signup → create class → add student → capture PIN → sign out → student join → student home → start diagnostic → intervention → practice → mastery → completed cycle. A second pass verified the teacher progress view: class stats → student progress → Teacher Insight → mastery evidence.
 
 Classroom learning sessions are linked to the signed-in student and their class. The demo workspace and the classroom portal share the same six-agent orchestrator through a small session-store contract: the demo uses the JSON store, while classroom sessions are persisted in Postgres. The student home shows live status and opens `/portal/student/learn`, which starts or resumes the student's own cycle. Cross-student reads and writes return `404`.
+
+Teachers see the class roster with a live learning status, then open any student to read the diagnostic evidence, intervention path, mastery result and the Teacher Insight summary. Progress endpoints resolve sessions through `class_id`, so a teacher cannot read another teacher's class or a student outside their roster.
 
 ### Pilot safety notes
 
@@ -362,8 +368,10 @@ the demo script above.
 With `DATABASE_URL` set, the classroom suite also covers teacher/student auth,
 roster ownership and PIN resets, student session ownership, cross-student
 isolation, starting and resuming a classroom cycle, restarting an active cycle,
-and a full six-agent classroom run persisted against the correct `class_id` and
-`student_id`. Without a database those tests skip and the demo suite still runs.
+a full six-agent classroom run persisted against the correct `class_id` and
+`student_id`, and the teacher progress endpoints (class stats, per-student
+detail, Teacher Insight, and cross-teacher isolation). Without a database those
+tests skip and the demo suite still runs.
 
 ---
 
@@ -380,7 +388,7 @@ and a full six-agent classroom run persisted against the correct `class_id` and
 ## Known limitations
 
 - The default demo still uses local JSON persistence, which is single-process and intended for a demo, not concurrent production use. The classroom tenancy layer uses Postgres instead.
-- Classroom learning sessions are persisted and scoped to the student, but the teacher portal does not yet surface classroom progress, mastery results or the Teacher Insight summary. Teachers currently see the roster only; a per-class progress view is the next milestone.
+- Classroom learning sessions are persisted and scoped to the student. The teacher progress view is read-only: it shows the diagnosis, mastery result and Teacher Insight, but there is no teacher override for the mastery threshold, regrouping, or assignment of a new topic.
 - The demo/learner/teacher routes remain unauthenticated by design. Classroom routes (`/api/auth`, `/api/classes`, `/api/student`) require a session and enforce class ownership, but the original demo switcher is still navigation rather than a security boundary.
 - One topic (`Integers and introductory algebra`) with a small question bank; adding new gaps requires new lesson and mastery sets.
 - Mastery threshold and attempt limit are configuration values; there is no teacher override UI.

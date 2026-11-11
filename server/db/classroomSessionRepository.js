@@ -55,6 +55,17 @@ export async function listSessionsForLearner(studentId) {
   return rows.map((row) => row.snapshot);
 }
 
+export async function listSessionsForClass(classId) {
+  const { rows } = await query(
+    `select student_id, snapshot
+     from learning_sessions
+     where class_id = $1
+     order by created_at desc`,
+    [classId],
+  );
+  return rows.map((row) => ({ studentId: row.student_id, session: row.snapshot }));
+}
+
 export async function findSession(sessionId) {
   const { rows } = await query(
     "select snapshot from learning_sessions where id = $1",
