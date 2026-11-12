@@ -334,6 +334,7 @@ Teachers see the class roster with a live learning status, then open any student
 - The public `/privacy` page explains what is stored, who can see it, the AI-provider data flow, retention and erasure. Add the school or operator's information-officer contact before using real learner data.
 - A teacher can rotate a class code, erase one student's learning history, or permanently delete a class and all of its data. Removing a student also erases their learning history. These are the pilot erasure controls; they are not a substitute for a documented POPIA process.
 - Unsafe API requests (`POST`, `PATCH`, `DELETE`) are rejected with `403` when the browser `Origin` is not the same host or listed in `CORS_ORIGINS`. Requests with no `Origin` (server-to-server, curl, tests) are allowed. Cookies remain `HttpOnly` and `SameSite=Lax`.
+- API responses send `Cache-Control: no-store` and `X-Frame-Options: DENY`; production responses also send HSTS.
 - Student sessions expire after `STUDENT_SESSION_HOURS` (default 12) because devices may be shared. Teacher sessions last `SESSION_TTL_DAYS` (default 30).
 - Set `CORS_ORIGINS` to the exact frontend origins in production. Rotating a class code stops new sign-ins with the old code but does not sign out students who are already in a session.
 - Set `SESSION_COOKIE_SECURE=true` in production (it defaults to true when `NODE_ENV=production`).

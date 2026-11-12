@@ -30,9 +30,20 @@ export function createApp() {
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "same-origin");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    if (config.nodeEnv === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    }
     next();
   });
 
+  app.use("/api", (_req, res, next) => {
+    // API responses can contain personal classroom data; never let a shared
+    // cache or browser history store them.
+    res.setHeader("Cache-Control", "no-store");
+    next();
+  });
   app.use("/api", requireTrustedOrigin);
   app.use("/api", attachAuth);
   app.use("/api", apiRouter);

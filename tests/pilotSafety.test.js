@@ -57,7 +57,12 @@ const request = async (pathname, { method = "GET", body, cookie, origin } = {}) 
     }
   }
 
-  return { status: response.status, body: payload, cookie: readSessionCookie(response) };
+  return {
+    status: response.status,
+    body: payload,
+    cookie: readSessionCookie(response),
+    headers: response.headers,
+  };
 };
 
 const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -153,6 +158,8 @@ test("untrusted browser origins are blocked on unsafe methods", { skip }, async 
   // for server-to-server clients and the test suite.
   const health = await request("/health", { origin: "https://evil.example" });
   assert.equal(health.status, 200);
+  assert.equal(health.headers.get("cache-control"), "no-store");
+  assert.equal(health.headers.get("x-frame-options"), "DENY");
 });
 
 test("a roster and a student session exist for the erasure tests", { skip }, async () => {
