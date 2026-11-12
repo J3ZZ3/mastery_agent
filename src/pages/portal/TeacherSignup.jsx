@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { UserPlus } from "lucide-react";
 import AuthLayout from "../../components/AuthLayout.jsx";
 import { Alert, Button } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
+import { api } from "../../lib/api.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 
 const MIN_PASSWORD = 8;
@@ -12,12 +13,26 @@ export default function TeacherSignup() {
   const { user, loading, teacherSignup } = useAuth();
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ name: "", email: "", password: "", confirm: "" });
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    confirm: "",
+    inviteCode: "",
+  });
+  const [inviteRequired, setInviteRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+
+  useEffect(() => {
+    api
+      .authConfig()
+      .then((data) => setInviteRequired(Boolean(data?.pilotInviteRequired)))
+      .catch(() => {});
+  }, []);
 
   if (!loading && user?.role === "teacher") {
     return <Navigate to="/portal/teacher" replace />;
@@ -27,6 +42,7 @@ export default function TeacherSignup() {
     const next = {};
     if (!form.name.trim()) next.name = "Enter your name.";
     if (!form.email.trim()) next.email = "Enter your email.";
+    if (inviteRequired && !form.inviteCode.trim()) next.inviteCode = "Enter your pilot invite code.";
     if (form.password.length < MIN_PASSWORD) next.password = `Use at least ${MIN_PASSWORD} characters.`;
     if (form.confirm !== form.password) next.confirm = "The passwords do not match.";
     setFieldErrors(next);
@@ -44,14 +60,11 @@ export default function TeacherSignup() {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
+        ...(inviteRequired ? { inviteCode: form.inviteCode.trim() } : {}),
       });
       navigate("/portal/teacher", { replace: true });
     } catch (err) {
-      setError(
-        err.status === 403
-          ? "Teacher signup is currently closed. Ask the pilot administrator for an account."
-          : err.message || "Could not create your account. Please try again.",
-      );
+      setError(err.message || "Could not create your account. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -99,6 +112,26 @@ export default function TeacherSignup() {
             placeholder="you@school.example"
           />
         </Field>
+
+        {inviteRequired ? (
+          <Field
+            id="inviteCode"
+            label="Pilot invite code"
+            hint="Ask the pilot coordinator for this code."
+            error={fieldErrors.inviteCode}
+          >
+            <input
+              id="inviteCode"
+              type="text"
+              autoComplete="off"
+              required
+              value={form.inviteCode}
+              onChange={update("inviteCode")}
+              className={inputClasses}
+              placeholder="Pilot invite code"
+            />
+          </Field>
+        ) : null}
 
         <Field
           id="password"

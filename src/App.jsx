@@ -18,6 +18,7 @@ import TeacherVerifyEmail from "./pages/portal/TeacherVerifyEmail.jsx";
 import StudentJoin from "./pages/portal/StudentJoin.jsx";
 import TeacherClasses from "./pages/portal/TeacherClasses.jsx";
 import TeacherClassDetail from "./pages/portal/TeacherClassDetail.jsx";
+import TeacherBilling from "./pages/portal/TeacherBilling.jsx";
 import ClassroomStudentProgress from "./pages/portal/ClassroomStudentProgress.jsx";
 import StudentHome from "./pages/portal/StudentHome.jsx";
 import StudentLearning from "./pages/portal/StudentLearning.jsx";
@@ -48,6 +49,14 @@ export default function App() {
           element={
             <RequireRole role="teacher">
               <TeacherClassDetail />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="portal/teacher/billing"
+          element={
+            <RequireRole role="teacher">
+              <TeacherBilling />
             </RequireRole>
           }
         />

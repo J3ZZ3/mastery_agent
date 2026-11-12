@@ -258,7 +258,7 @@ teachers ──< classes ──< students ──< learning_sessions
                  └── auth_sessions (teacher or student principal)
 ```
 
-- `teachers`: email (unique, case-insensitive), name, scrypt password hash and `email_verified_at`.
+- `teachers`: email (unique, case-insensitive), name, scrypt password hash, `email_verified_at`, plan (`pilot` or `paid`), `trial_ends_at` and `upgrade_requested_at`.
 - `classes`: name, subject, grade, unique join code, owner (`teacher_id`) and the time the teacher attested to having school/guardian permission (`consent_attested_at`).
 - `students`: display name (unique per class), scrypt PIN hash, last seen.
 - `teacher_tokens`: single-use password-reset and email-verification tokens. Only a SHA-256 hash is stored; each row has a purpose, expiry and `used_at`.
@@ -271,8 +271,9 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/auth/teacher/signup` | create a teacher account and session; sends a verification email |
+| `POST` | `/api/auth/teacher/signup` | create a teacher account and session; sends a verification email and checks `PILOT_INVITE_CODE` when set |
 | `POST` | `/api/auth/teacher/login` | teacher sign-in |
+| `GET` | `/api/auth/config` | public signup flags (`teacherSignupOpen`, `pilotInviteRequired`) |
 | `POST` | `/api/auth/teacher/forgot-password` | send a single-use reset link (always returns `200`) |
 | `POST` | `/api/auth/teacher/reset-password` | consume a reset token, change the password and revoke every teacher session |
 | `POST` | `/api/auth/teacher/verify-email` | consume a verification token |
@@ -280,6 +281,9 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 | `POST` | `/api/auth/student/login` | class code + name + PIN |
 | `POST` | `/api/auth/logout` | delete the session and clear the cookie |
 | `GET` | `/api/auth/me` | current teacher or student principal |
+| `GET` | `/api/billing` | the teacher's plan, trial state, limits and usage |
+| `POST` | `/api/billing/upgrade-request` | record an upgrade request and notify the pilot operator |
+| `POST` | `/api/billing/webhook` | provider/operator plan activation, authenticated with `x-mastery-billing-secret` |
 | `GET` | `/api/classes` | teacher's active classes with student counts |
 | `GET` | `/api/classes/archived` | teacher's archived classes with student counts |
 | `POST` | `/api/classes` | create a class and join code (requires `consentAttested: true`) |
@@ -320,12 +324,13 @@ The classroom pilot has its own frontend, separate from the demo workspace:
 | `/portal` | public | choose teacher or student access |
 | `/privacy` | public | POPIA-aware pilot privacy notice |
 | `/portal/teacher/login` | teacher | sign in, forgot-password link |
-| `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`) |
+| `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`; asks for an invite code when `PILOT_INVITE_CODE` is set) |
 | `/portal/teacher/forgot-password` | teacher | request a password-reset link |
 | `/portal/teacher/reset-password` | teacher | choose a new password from an emailed token |
 | `/portal/teacher/verify-email` | teacher | verify an emailed token |
 | `/portal/teacher` | teacher | class list, create class with consent attestation, verification banner, archived classes and restore |
 | `/portal/teacher/classes/:classId` | teacher | roster, class stats, edit/archive/restore, add student, CSV import, printable PIN slips, rotate code, remove student, erase history, delete class |
+| `/portal/teacher/billing` | teacher | plan, trial countdown, usage, limits and upgrade request |
 | `/portal/teacher/classes/:classId/students/:studentId` | teacher | one student's diagnosis, mastery result and Teacher Insight |
 | `/portal/student` | student | join with class code + name + PIN |
 | `/portal/student/home` | student | class card, class code, learning status and start/continue CTA |
@@ -349,7 +354,7 @@ Teachers see the class roster with a live learning status, then open any student
 - Student sessions expire after `STUDENT_SESSION_HOURS` (default 12) because devices may be shared. Teacher sessions last `SESSION_TTL_DAYS` (default 30).
 - Set `CORS_ORIGINS` to the exact frontend origins in production. Rotating a class code stops new sign-ins with the old code but does not sign out students who are already in a session.
 - Set `SESSION_COOKIE_SECURE=true` in production (it defaults to true when `NODE_ENV=production`).
-- `TEACHER_SIGNUP_OPEN=false` closes public teacher registration once the pilot cohort is enrolled.
+- `TEACHER_SIGNUP_OPEN=false` closes public teacher registration once the pilot cohort is enrolled. `PILOT_INVITE_CODE` adds a second gate: when set, signup requires that code and the form asks for it.
 - Teacher email verification and password reset use single-use tokens stored only as SHA-256 hashes. Links expire after `EMAIL_VERIFICATION_TTL_HOURS` (default 48) and `PASSWORD_RESET_TTL_MINUTES` (default 30). A password reset revokes every existing teacher session.
 - `EMAIL_DELIVERY=console` (default) prints the verification/reset link to the server log, which is enough for a supervised pilot. Set `EMAIL_DELIVERY=resend` with `RESEND_API_KEY` and `EMAIL_FROM` for real delivery. Set `APP_ORIGIN` so emailed links point at the deployed frontend.
 - `REQUIRE_TEACHER_EMAIL_VERIFICATION=false` by default. Set it to `true` to block class management until the teacher opens the verification link; the dashboard shows a resend banner either way.
@@ -359,6 +364,38 @@ Teachers see the class roster with a live learning status, then open any student
 - A 4-digit PIN has 10,000 combinations. The rate limiter is the main brute-force control for a pilot; add a per-student lockout or longer PIN before a wider rollout.
 - For POPIA, keep student data minimal (display name only), publish a privacy notice, and obtain guardian consent before using real learner data. The AI provider receives workflow content when `AI_PROVIDER=openai`; review that data flow before a real pilot.
 - There is no audit log of teacher data access or deletion yet, and no automated retention job. Add both before a paid rollout.
+
+### Pilot plans and conversion
+
+Every new teacher starts on the free pilot. Limits and the trial length are configuration, not hard-coded:
+
+| Plan | Active classes | Students per class | Trial |
+| --- | --- | --- | --- |
+| `pilot` | `PILOT_MAX_CLASSES` (5) | `PILOT_MAX_STUDENTS_PER_CLASS` (60) | `PILOT_TRIAL_DAYS` (60) |
+| `paid` | `PAID_MAX_CLASSES` (50) | `PAID_MAX_STUDENTS_PER_CLASS` (300) | none |
+
+Archived classes and their students do not count toward these limits. When a pilot expires, existing classes and student sign-ins keep working, but creating a class, adding or importing students, and restoring a class over the limit return `402` with an upgrade message. Nothing is deleted.
+
+The teacher's **Plan** page shows the trial countdown, usage, limits and a request form. Requests set `teachers.upgrade_requested_at` and are emailed to `BILLING_NOTIFY_EMAIL` (or logged when it is empty). A request never charges a card by itself.
+
+Activate a plan from an operator machine:
+
+```bash
+npm run plan:set -- teacher@school.example paid
+# or put an account back on an expired pilot
+npm run plan:set -- teacher@school.example pilot
+```
+
+A payment provider can call the webhook instead:
+
+```bash
+curl -X POST https://your-api.example/api/billing/webhook \
+  -H "content-type: application/json" \
+  -H "x-mastery-billing-secret: $BILLING_WEBHOOK_SECRET" \
+  -d '{"email":"teacher@school.example","plan":"paid"}'
+```
+
+The webhook is disabled unless `BILLING_WEBHOOK_SECRET` is set. Treat the secret like any other production credential and rotate it if it leaks.
 
 ---
 
@@ -401,8 +438,10 @@ adds consent enforcement, class-code rotation, learning-history erasure,
 permanent class deletion and the untrusted-origin guard. The teacher-lifecycle
 suite covers verification enforcement, single-use tokens, password reset and
 session revocation; the class-operations suite covers editing, CSV import,
-archive/restore and cross-teacher isolation for those actions. Without a
-database those tests skip and the demo suite still runs.
+archive/restore and cross-teacher isolation for those actions; the pilot-plans
+suite covers the invite gate, class and student limits, upgrade requests, the
+billing webhook, paid-plan activation and trial expiry while existing classes
+stay usable. Without a database those tests skip and the demo suite still runs.
 
 `.github/workflows/ci.yml` runs `npm ci`, the full test suite against a
 Postgres 16 service, and `npm run build` on every push and pull request.

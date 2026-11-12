@@ -11,6 +11,9 @@ const PRINCIPAL_SQL = `
     t.email as teacher_email,
     t.name as teacher_name,
     t.email_verified_at as teacher_email_verified_at,
+    t.plan as teacher_plan,
+    t.trial_ends_at as teacher_trial_ends_at,
+    t.upgrade_requested_at as teacher_upgrade_requested_at,
     st.id as student_id,
     st.display_name as student_name,
     st.last_seen_at as student_last_seen_at,
@@ -54,6 +57,9 @@ export async function findAuthSession(tokenHash) {
         name: row.teacher_name,
         emailVerified: Boolean(row.teacher_email_verified_at),
         emailVerifiedAt: row.teacher_email_verified_at || null,
+        plan: row.teacher_plan === "paid" ? "paid" : "pilot",
+        trialEndsAt: row.teacher_trial_ends_at || null,
+        upgradeRequestedAt: row.teacher_upgrade_requested_at || null,
       },
     };
   }

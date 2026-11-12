@@ -3,10 +3,17 @@ import { query } from "../db/postgres.js";
 import { hashSecret, verifySecret, generatePin } from "../auth/passwords.js";
 import { newId } from "../lib/id.js";
 import { AppError } from "../lib/errors.js";
+import {
+  assertCanAddStudents,
+  assertCanCreateClass,
+  assertCanRestoreClass,
+  assertTrialActive,
+  getTeacherPlan,
+  newTeacherTrialEnd,
+} from "./planService.js";
 
 const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const JOIN_CODE_LENGTH = 6;
-const MAX_STUDENTS_PER_CLASS = 300;
 
 const teacherDto = (row) => ({
   id: row.id,
@@ -14,6 +21,9 @@ const teacherDto = (row) => ({
   name: row.name,
   emailVerified: Boolean(row.email_verified_at),
   emailVerifiedAt: row.email_verified_at || null,
+  plan: row.plan === "paid" ? "paid" : "pilot",
+  trialEndsAt: row.trial_ends_at || null,
+  upgradeRequestedAt: row.upgrade_requested_at || null,
   createdAt: row.created_at,
 });
 
@@ -60,10 +70,11 @@ export async function signupTeacher({ email, name, password }) {
 
   try {
     const { rows } = await query(
-      `insert into teachers (id, email, name, password_hash)
-       values ($1, $2, $3, $4)
-       returning id, email, name, email_verified_at, created_at`,
-      [newId("tch"), normalizedEmail, normalizeName(name), passwordHash],
+      `insert into teachers (id, email, name, password_hash, trial_ends_at)
+       values ($1, $2, $3, $4, $5)
+       returning id, email, name, email_verified_at, plan, trial_ends_at,
+                 upgrade_requested_at, created_at`,
+      [newId("tch"), normalizedEmail, normalizeName(name), passwordHash, newTeacherTrialEnd()],
     );
     return teacherDto(rows[0]);
   } catch (error) {
@@ -76,7 +87,8 @@ export async function signupTeacher({ email, name, password }) {
 
 export async function authenticateTeacher({ email, password }) {
   const { rows } = await query(
-    `select id, email, name, password_hash, email_verified_at, created_at
+    `select id, email, name, password_hash, email_verified_at, plan,
+            trial_ends_at, upgrade_requested_at, created_at
      from teachers
      where lower(email) = lower($1)
      limit 1`,
@@ -92,7 +104,7 @@ export async function authenticateTeacher({ email, password }) {
 
 export async function getTeacher(teacherId) {
   const { rows } = await query(
-    "select id, email, name, email_verified_at, created_at from teachers where id = $1",
+    "select id, email, name, email_verified_at, plan, trial_ends_at, upgrade_requested_at, created_at from teachers where id = $1",
     [teacherId],
   );
   if (!rows[0]) throw new AppError(404, "Teacher account not found.");
@@ -101,7 +113,8 @@ export async function getTeacher(teacherId) {
 
 export async function findTeacherByEmail(email) {
   const { rows } = await query(
-    `select id, email, name, email_verified_at, created_at
+    `select id, email, name, email_verified_at, plan, trial_ends_at,
+            upgrade_requested_at, created_at
      from teachers
      where lower(email) = lower($1)
      limit 1`,
@@ -116,7 +129,8 @@ export async function setTeacherPassword(teacherId, password) {
     `update teachers
      set password_hash = $2
      where id = $1
-     returning id, email, name, email_verified_at, created_at`,
+     returning id, email, name, email_verified_at, plan, trial_ends_at,
+               upgrade_requested_at, created_at`,
     [teacherId, passwordHash],
   );
   if (!rows[0]) throw new AppError(404, "Teacher account not found.");
@@ -128,7 +142,8 @@ export async function markTeacherEmailVerified(teacherId) {
     `update teachers
      set email_verified_at = coalesce(email_verified_at, now())
      where id = $1
-     returning id, email, name, email_verified_at, created_at`,
+     returning id, email, name, email_verified_at, plan, trial_ends_at,
+               upgrade_requested_at, created_at`,
     [teacherId],
   );
   if (!rows[0]) throw new AppError(404, "Teacher account not found.");
@@ -146,6 +161,8 @@ export async function createClass(teacherId, { name, subject, grade, consentAtte
       "Confirm that you have permission to create student accounts before creating a class.",
     );
   }
+
+  await assertCanCreateClass(teacherId);
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const joinCode = generateJoinCode();
@@ -193,6 +210,8 @@ export async function listArchivedClasses(teacherId) {
 }
 
 export async function restoreClass(teacherId, classId) {
+  await assertCanRestoreClass(teacherId);
+
   const { rows } = await query(
     `update classes
      set archived_at = null, updated_at = now()
@@ -324,9 +343,7 @@ export async function addStudent(teacherId, classId, { displayName }) {
     "select count(*)::int as total from students where class_id = $1",
     [classId],
   );
-  if (counts[0].total >= MAX_STUDENTS_PER_CLASS) {
-    throw new AppError(409, `A class can have at most ${MAX_STUDENTS_PER_CLASS} students.`);
-  }
+  await assertCanAddStudents(teacherId, counts[0].total, 1);
 
   const pin = generatePin();
   const pinHash = await hashSecret(pin);
@@ -395,6 +412,9 @@ export async function importStudents(teacherId, classId, { csv }) {
     [classId],
   );
 
+  const planInfo = await getTeacherPlan(teacherId);
+  assertTrialActive(planInfo);
+
   let total = counts[0].total;
   const imported = [];
   const skipped = [];
@@ -414,8 +434,8 @@ export async function importStudents(teacherId, classId, { csv }) {
     }
     seen.add(key);
 
-    if (total >= MAX_STUDENTS_PER_CLASS) {
-      skipped.push({ name: displayName, reason: "The class is full." });
+    if (total >= planInfo.limits.maxStudentsPerClass) {
+      skipped.push({ name: displayName, reason: "The class is full for this plan." });
       continue;
     }
 

@@ -9,6 +9,7 @@ import { config } from "../config.js";
 import { databaseConfigured } from "../db/postgres.js";
 import { authRouter } from "./auth.js";
 import { classesRouter, studentRouter } from "./classes.js";
+import { billingRouter } from "./billing.js";
 import {
   createLearningSession,
   submitDiagnostic,
@@ -26,6 +27,7 @@ export const apiRouter = Router();
 apiRouter.use("/auth", authRouter);
 apiRouter.use("/classes", classesRouter);
 apiRouter.use("/student", studentRouter);
+apiRouter.use("/billing", billingRouter);
 
 apiRouter.get(
   "/health",

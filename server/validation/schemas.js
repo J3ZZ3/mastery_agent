@@ -21,6 +21,7 @@ export const requestSchemas = {
     email: z.string().trim().email().max(200),
     name: personName,
     password: z.string().min(8).max(200),
+    inviteCode: z.string().trim().max(120).optional(),
   }),
   teacherLogin: z.object({
     email: z.string().trim().email().max(200),
@@ -38,6 +39,14 @@ export const requestSchemas = {
   }),
   importStudents: z.object({
     csv: z.string().trim().min(1).max(20_000),
+  }),
+  upgradeRequest: z.object({
+    note: z.string().trim().max(1000).optional().default(""),
+  }),
+  billingWebhook: z.object({
+    email: z.string().trim().email().max(200),
+    plan: z.enum(["pilot", "paid"]),
+    trialEndsAt: z.string().datetime({ offset: true }).optional(),
   }),
   studentLogin: z.object({
     joinCode: z

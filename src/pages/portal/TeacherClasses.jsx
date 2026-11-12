@@ -27,6 +27,7 @@ export default function TeacherClasses() {
 
   const [classes, setClasses] = useState([]);
   const [archived, setArchived] = useState([]);
+  const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -39,12 +40,14 @@ export default function TeacherClasses() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [active, archivedClasses] = await Promise.all([
+      const [active, archivedClasses, billingData] = await Promise.all([
         api.classes(),
         api.archivedClasses(),
+        api.billing(),
       ]);
       setClasses(active.classes);
       setArchived(archivedClasses.classes);
+      setBilling(billingData.billing);
       setError(null);
     } catch (err) {
       if (err.status === 401) {
@@ -214,6 +217,48 @@ export default function TeacherClasses() {
             >
               Resend verification email
             </Button>
+          </div>
+        </Alert>
+      ) : null}
+
+      {billing && !billing.trialActive ? (
+        <Alert tone="warning" title="Your free pilot has ended">
+          <div className="space-y-3">
+            <p>
+              Your classes, rosters and learning history are safe, and students can keep using their
+              current classes. Creating new classes and adding students is paused.
+            </p>
+            <Link
+              to="/portal/teacher/billing"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-900 underline hover:text-amber-950"
+            >
+              View your plan and request an upgrade
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          </div>
+        </Alert>
+      ) : billing &&
+        billing.plan === "pilot" &&
+        billing.trialDaysRemaining !== null &&
+        billing.trialDaysRemaining <= 7 ? (
+        <Alert
+          tone="info"
+          title={`${billing.trialDaysRemaining} ${
+            billing.trialDaysRemaining === 1 ? "day" : "days"
+          } left in your pilot`}
+        >
+          <div className="space-y-3">
+            <p>
+              Nothing changes automatically. Request an upgrade before the pilot ends to keep adding
+              classes and students without interruption.
+            </p>
+            <Link
+              to="/portal/teacher/billing"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-900 underline hover:text-sky-950"
+            >
+              Review your plan
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
           </div>
         </Alert>
       ) : null}

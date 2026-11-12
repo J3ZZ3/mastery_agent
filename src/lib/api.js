@@ -62,6 +62,7 @@ export const api = {
 
   // Classroom pilot
   me: () => request("/auth/me"),
+  authConfig: () => request("/auth/config"),
   teacherSignup: (body) =>
     request("/auth/teacher/signup", { method: "POST", body: JSON.stringify(body) }),
   teacherLogin: (body) =>
@@ -110,6 +111,9 @@ export const api = {
     request(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
   deleteStudentHistory: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}/history`, { method: "DELETE" }),
+  billing: () => request("/billing"),
+  requestUpgrade: (body = {}) =>
+    request("/billing/upgrade-request", { method: "POST", body: JSON.stringify(body) }),
   studentClass: () => request("/student/class"),
   studentProgress: () => request("/student/sessions"),
   startStudentSession: (body = {}) =>
