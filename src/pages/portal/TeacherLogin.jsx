@@ -87,6 +87,15 @@ export default function TeacherLogin() {
           />
         </Field>
 
+        <div className="flex justify-end">
+          <Link
+            to="/portal/teacher/forgot-password"
+            className="text-xs font-semibold text-mint-700 hover:text-mint-800"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
         <Button type="submit" variant="mint" size="lg" icon={LogIn} loading={busy} className="w-full">
           Sign in
         </Button>

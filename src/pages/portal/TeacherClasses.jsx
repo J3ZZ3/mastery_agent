@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowRight, BookOpen, Plus, RefreshCw, Users } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, ArrowRight, BookOpen, MailCheck, Plus, RefreshCw, Users } from "lucide-react";
 import { api } from "../../lib/api.js";
 import { useApp } from "../../context/AppContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -17,6 +17,7 @@ import {
 } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
 import CopyButton from "../../components/CopyButton.jsx";
+import { formatDate } from "../../lib/format.js";
 
 const EMPTY_FORM = { name: "", subject: "Mathematics", grade: "9", consent: false };
 
@@ -25,22 +26,37 @@ export default function TeacherClasses() {
   const { notify } = useApp();
 
   const [classes, setClasses] = useState([]);
+  const [archived, setArchived] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState("");
+  const [sendingVerification, setSendingVerification] = useState(false);
+  const [restoringId, setRestoringId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.classes();
-      setClasses(data.classes);
+      const [active, archivedClasses] = await Promise.all([
+        api.classes(),
+        api.archivedClasses(),
+      ]);
+      setClasses(active.classes);
+      setArchived(archivedClasses.classes);
       setError(null);
     } catch (err) {
       if (err.status === 401) {
         await refresh();
+        return;
+      }
+      if (err.status === 403) {
+        // Email verification can be enforced server-side. The dashboard banner
+        // explains how to resend the link, so keep the page usable.
+        setClasses([]);
+        setArchived([]);
+        setError(null);
         return;
       }
       setError(err);
@@ -88,6 +104,37 @@ export default function TeacherClasses() {
       setFormError(err.message || "Could not create the class.");
     } finally {
       setCreating(false);
+    }
+  };
+
+  const resendVerification = async () => {
+    setSendingVerification(true);
+    try {
+      const result = await api.resendTeacherVerification();
+      notify(
+        result.alreadyVerified
+          ? "Your email is already verified."
+          : "Verification email sent. Check your inbox.",
+        "success",
+      );
+      await refresh();
+    } catch (err) {
+      notify(err.message || "Could not send the verification email.", "error");
+    } finally {
+      setSendingVerification(false);
+    }
+  };
+
+  const restore = async (classroom) => {
+    setRestoringId(classroom.id);
+    try {
+      await api.restoreClass(classroom.id);
+      notify(`${classroom.name} restored.`, "success");
+      await load();
+    } catch (err) {
+      notify(err.message || "Could not restore the class.", "error");
+    } finally {
+      setRestoringId(null);
     }
   };
 
@@ -150,6 +197,27 @@ export default function TeacherClasses() {
         />
       </div>
 
+      {user?.teacher && !user.teacher.emailVerified ? (
+        <Alert tone="warning" title="Verify your email address">
+          <div className="space-y-3">
+            <p>
+              We sent a verification link to{" "}
+              <span className="font-semibold text-amber-900">{user.teacher.email}</span>. Verifying makes
+              account recovery safer and lets the pilot contact you about your classes.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={MailCheck}
+              loading={sendingVerification}
+              onClick={resendVerification}
+            >
+              Resend verification email
+            </Button>
+          </div>
+        </Alert>
+      ) : null}
+
       {classes.length === 0 ? (
         <EmptyState
           icon={BookOpen}
@@ -208,6 +276,51 @@ export default function TeacherClasses() {
           ))}
         </ul>
       )}
+
+      {archived.length > 0 ? (
+        <section className="space-y-4">
+          <SectionHeading
+            title={`Archived classes · ${archived.length}`}
+            description="Archived classes keep their roster and history but students cannot sign in to them. Restore one to use it again."
+          />
+          <ul className="grid gap-4 md:grid-cols-2">
+            {archived.map((classroom) => (
+              <li key={classroom.id}>
+                <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-ink-950">{classroom.name}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {classroom.subject}
+                      {classroom.grade ? ` · Grade ${classroom.grade}` : ""} · {classroom.studentCount}{" "}
+                      {classroom.studentCount === 1 ? "student" : "students"}
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Archived {formatDate(classroom.archivedAt)}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Link
+                      to={`/portal/teacher/classes/${classroom.id}`}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      View
+                    </Link>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      icon={ArchiveRestore}
+                      loading={restoringId === classroom.id}
+                      onClick={() => restore(classroom)}
+                    >
+                      Restore
+                    </Button>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <Modal
         open={createOpen}

@@ -10,6 +10,7 @@ const PRINCIPAL_SQL = `
     t.id as teacher_id,
     t.email as teacher_email,
     t.name as teacher_name,
+    t.email_verified_at as teacher_email_verified_at,
     st.id as student_id,
     st.display_name as student_name,
     st.last_seen_at as student_last_seen_at,
@@ -51,6 +52,8 @@ export async function findAuthSession(tokenHash) {
         id: row.teacher_id,
         email: row.teacher_email,
         name: row.teacher_name,
+        emailVerified: Boolean(row.teacher_email_verified_at),
+        emailVerifiedAt: row.teacher_email_verified_at || null,
       },
     };
   }
@@ -87,6 +90,14 @@ export async function touchAuthSession(sessionId) {
 
 export async function deleteAuthSession(tokenHash) {
   await query("delete from auth_sessions where token_hash = $1", [tokenHash]);
+}
+
+/**
+ * Sign a teacher out everywhere. Used after a password reset so a stolen
+ * session cannot outlive the credential it was created with.
+ */
+export async function deleteTeacherAuthSessions(teacherId) {
+  await query("delete from auth_sessions where teacher_id = $1", [teacherId]);
 }
 
 export async function deleteExpiredAuthSessions() {

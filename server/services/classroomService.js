@@ -12,6 +12,8 @@ const teacherDto = (row) => ({
   id: row.id,
   email: row.email,
   name: row.name,
+  emailVerified: Boolean(row.email_verified_at),
+  emailVerifiedAt: row.email_verified_at || null,
   createdAt: row.created_at,
 });
 
@@ -60,7 +62,7 @@ export async function signupTeacher({ email, name, password }) {
     const { rows } = await query(
       `insert into teachers (id, email, name, password_hash)
        values ($1, $2, $3, $4)
-       returning id, email, name, created_at`,
+       returning id, email, name, email_verified_at, created_at`,
       [newId("tch"), normalizedEmail, normalizeName(name), passwordHash],
     );
     return teacherDto(rows[0]);
@@ -74,7 +76,7 @@ export async function signupTeacher({ email, name, password }) {
 
 export async function authenticateTeacher({ email, password }) {
   const { rows } = await query(
-    `select id, email, name, password_hash, created_at
+    `select id, email, name, password_hash, email_verified_at, created_at
      from teachers
      where lower(email) = lower($1)
      limit 1`,
@@ -90,7 +92,43 @@ export async function authenticateTeacher({ email, password }) {
 
 export async function getTeacher(teacherId) {
   const { rows } = await query(
-    "select id, email, name, created_at from teachers where id = $1",
+    "select id, email, name, email_verified_at, created_at from teachers where id = $1",
+    [teacherId],
+  );
+  if (!rows[0]) throw new AppError(404, "Teacher account not found.");
+  return teacherDto(rows[0]);
+}
+
+export async function findTeacherByEmail(email) {
+  const { rows } = await query(
+    `select id, email, name, email_verified_at, created_at
+     from teachers
+     where lower(email) = lower($1)
+     limit 1`,
+    [normalizeEmail(email)],
+  );
+  return rows[0] ? teacherDto(rows[0]) : null;
+}
+
+export async function setTeacherPassword(teacherId, password) {
+  const passwordHash = await hashSecret(password);
+  const { rows } = await query(
+    `update teachers
+     set password_hash = $2
+     where id = $1
+     returning id, email, name, email_verified_at, created_at`,
+    [teacherId, passwordHash],
+  );
+  if (!rows[0]) throw new AppError(404, "Teacher account not found.");
+  return teacherDto(rows[0]);
+}
+
+export async function markTeacherEmailVerified(teacherId) {
+  const { rows } = await query(
+    `update teachers
+     set email_verified_at = coalesce(email_verified_at, now())
+     where id = $1
+     returning id, email, name, email_verified_at, created_at`,
     [teacherId],
   );
   if (!rows[0]) throw new AppError(404, "Teacher account not found.");
@@ -139,6 +177,31 @@ export async function listClasses(teacherId) {
     [teacherId],
   );
   return rows.map(classDto);
+}
+
+export async function listArchivedClasses(teacherId) {
+  const { rows } = await query(
+    `select c.*, count(s.id) as student_count
+     from classes c
+     left join students s on s.class_id = c.id
+     where c.teacher_id = $1 and c.archived_at is not null
+     group by c.id
+     order by c.archived_at desc`,
+    [teacherId],
+  );
+  return rows.map(classDto);
+}
+
+export async function restoreClass(teacherId, classId) {
+  const { rows } = await query(
+    `update classes
+     set archived_at = null, updated_at = now()
+     where id = $1 and teacher_id = $2
+     returning *`,
+    [classId, teacherId],
+  );
+  if (!rows[0]) throw new AppError(404, "Class not found.");
+  return classDto(rows[0]);
 }
 
 export async function requireOwnedClass(teacherId, classId) {
@@ -252,7 +315,10 @@ export async function getStudent(teacherId, classId, studentId) {
 }
 
 export async function addStudent(teacherId, classId, { displayName }) {
-  await requireOwnedClass(teacherId, classId);
+  const classroom = await requireOwnedClass(teacherId, classId);
+  if (classroom.archived_at) {
+    throw new AppError(409, "Restore this class before adding students.");
+  }
 
   const { rows: counts } = await query(
     "select count(*)::int as total from students where class_id = $1",
@@ -280,6 +346,101 @@ export async function addStudent(teacherId, classId, { displayName }) {
     }
     throw error;
   }
+}
+
+const MAX_CSV_ROWS = 100;
+
+const parseRosterCsv = (csv) => {
+  const names = [];
+
+  for (const rawLine of String(csv).split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const firstCell = line
+      .split(/[,;\t]/)[0]
+      .trim()
+      .replace(/^"(.*)"$/, "$1")
+      .trim();
+
+    if (!firstCell) continue;
+    if (/^(name|student|student name|display name|full name)$/i.test(firstCell)) continue;
+    names.push(firstCell);
+  }
+
+  return names;
+};
+
+/**
+ * Import a simple roster CSV. The first column is the student name; a header
+ * row is optional. Every imported student gets a one-time PIN in the response,
+ * so the teacher can print the slips immediately.
+ */
+export async function importStudents(teacherId, classId, { csv }) {
+  const classroom = await requireOwnedClass(teacherId, classId);
+  if (classroom.archived_at) {
+    throw new AppError(409, "Restore this class before importing students.");
+  }
+
+  const names = parseRosterCsv(csv);
+  if (names.length === 0) {
+    throw new AppError(400, "No student names were found in the CSV.");
+  }
+  if (names.length > MAX_CSV_ROWS) {
+    throw new AppError(400, `Import at most ${MAX_CSV_ROWS} students at a time.`);
+  }
+
+  const { rows: counts } = await query(
+    "select count(*)::int as total from students where class_id = $1",
+    [classId],
+  );
+
+  let total = counts[0].total;
+  const imported = [];
+  const skipped = [];
+  const seen = new Set();
+
+  for (const rawName of names) {
+    const displayName = normalizeName(rawName);
+    const key = displayName.toLowerCase();
+
+    if (!displayName || displayName.length > 80) {
+      skipped.push({ name: rawName, reason: "A name must be between 1 and 80 characters." });
+      continue;
+    }
+    if (seen.has(key)) {
+      skipped.push({ name: displayName, reason: "Duplicate name in the file." });
+      continue;
+    }
+    seen.add(key);
+
+    if (total >= MAX_STUDENTS_PER_CLASS) {
+      skipped.push({ name: displayName, reason: "The class is full." });
+      continue;
+    }
+
+    const pin = generatePin();
+    const pinHash = await hashSecret(pin);
+
+    try {
+      const { rows } = await query(
+        `insert into students (id, class_id, display_name, pin_hash)
+         values ($1, $2, $3, $4)
+         returning id, class_id, display_name, created_at, last_seen_at`,
+        [newId("stu"), classId, displayName, pinHash],
+      );
+      total += 1;
+      imported.push({ student: studentDto(rows[0]), pin });
+    } catch (error) {
+      if (error.code === "23505") {
+        skipped.push({ name: displayName, reason: "Already in this class." });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return { imported, skipped, totalStudents: total };
 }
 
 export async function resetStudentPin(teacherId, classId, studentId) {

@@ -55,6 +55,14 @@ export function requireTeacher(req, _res, next) {
   if (req.auth.role !== "teacher") {
     return next(new AppError(403, "A teacher account is required for this action."));
   }
+  if (config.requireTeacherEmailVerification && !req.auth.teacher?.emailVerified) {
+    return next(
+      new AppError(
+        403,
+        "Verify your email address before managing classes. Check your inbox for the verification link.",
+      ),
+    );
+  }
   return next();
 }
 

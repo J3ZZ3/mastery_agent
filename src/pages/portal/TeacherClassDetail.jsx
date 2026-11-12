@@ -3,15 +3,20 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
   KeyRound,
   Link2,
+  Pencil,
   Plus,
+  Printer,
   RefreshCw,
   RotateCcw,
   Trash2,
+  Upload,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -34,6 +39,7 @@ import {
 } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
 import CopyButton from "../../components/CopyButton.jsx";
+import { printPinSlips } from "../../lib/pinSlips.js";
 
 export default function TeacherClassDetail() {
   const { classId } = useParams();
@@ -59,6 +65,21 @@ export default function TeacherClassDetail() {
 
   const [rotateOpen, setRotateOpen] = useState(false);
   const [rotating, setRotating] = useState(false);
+
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState({ name: "", subject: "", grade: "" });
+  const [editError, setEditError] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+
+  const [importOpen, setImportOpen] = useState(false);
+  const [csv, setCsv] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
 
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteText, setDeleteText] = useState("");
@@ -154,6 +175,126 @@ export default function TeacherClassDetail() {
     }
   };
 
+  const openEdit = () => {
+    const classroom = data?.class;
+    if (!classroom) return;
+    setEditForm({
+      name: classroom.name,
+      subject: classroom.subject,
+      grade: classroom.grade ? String(classroom.grade) : "",
+    });
+    setEditError("");
+    setEditOpen(true);
+  };
+
+  const submitEdit = async (event) => {
+    event?.preventDefault();
+    setEditError("");
+
+    if (editForm.name.trim().length < 2) {
+      setEditError("Give the class a name of at least 2 characters.");
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const result = await api.updateClass(classId, {
+        name: editForm.name.trim(),
+        subject: editForm.subject.trim() || "Mathematics",
+        grade: editForm.grade === "" ? null : Number(editForm.grade),
+      });
+      setData((current) => (current ? { ...current, class: result.class } : current));
+      setEditOpen(false);
+      notify("Class details updated.", "success");
+      await load();
+    } catch (err) {
+      setEditError(err.message || "Could not update the class.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const confirmArchive = async () => {
+    setArchiving(true);
+    try {
+      await api.archiveClass(classId);
+      notify("Class archived. You can restore it from your class list.", "success");
+      navigate("/portal/teacher", { replace: true });
+    } catch (err) {
+      notify(err.message || "Could not archive the class.", "error");
+    } finally {
+      setArchiving(false);
+    }
+  };
+
+  const restoreArchived = async () => {
+    setRestoring(true);
+    try {
+      const result = await api.restoreClass(classId);
+      setData((current) => (current ? { ...current, class: result.class } : current));
+      notify("Class restored. Students can sign in with the class code again.", "success");
+      await load();
+    } catch (err) {
+      notify(err.message || "Could not restore the class.", "error");
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  const submitImport = async (event) => {
+    event?.preventDefault();
+    setImportError("");
+
+    if (!csv.trim()) {
+      setImportError("Paste at least one student name.");
+      return;
+    }
+
+    setImporting(true);
+    try {
+      const result = await api.importStudents(classId, { csv });
+      setImportOpen(false);
+      setImportResult(result);
+      setCsv("");
+      notify(
+        result.imported.length
+          ? `Imported ${result.imported.length} student${result.imported.length === 1 ? "" : "s"}.`
+          : "No new students were imported.",
+        result.imported.length ? "success" : "info",
+      );
+      await load();
+    } catch (err) {
+      setImportError(err.message || "Could not import the roster.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const printImported = () => {
+    if (!importResult?.imported?.length) return;
+    const opened = printPinSlips({
+      className: classroom.name,
+      joinUrl,
+      joinCode: classroom.joinCode,
+      slips: importResult.imported.map((entry) => ({
+        displayName: entry.student.displayName,
+        pin: entry.pin,
+      })),
+    });
+    if (!opened) notify("Allow pop-ups to print the PIN slips.", "error");
+  };
+
+  const printOne = () => {
+    if (!pinInfo) return;
+    const opened = printPinSlips({
+      className: classroom.name,
+      joinUrl,
+      joinCode: classroom.joinCode,
+      slips: [{ displayName: pinInfo.student.displayName, pin: pinInfo.pin }],
+    });
+    if (!opened) notify("Allow pop-ups to print the PIN slip.", "error");
+  };
+
   const confirmDeleteClass = async () => {
     setDeleting(true);
     try {
@@ -241,12 +382,35 @@ export default function TeacherClassDetail() {
                 No consent attestation on file. Confirm permission before adding learners.
               </p>
             )}
+            {classroom.archivedAt ? (
+              <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
+                <Archive className="h-3 w-3" aria-hidden="true" />
+                Archived {formatDate(classroom.archivedAt)} · students cannot sign in
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <CopyButton value={classroom.joinCode} label="Copy class code" />
+            <Button variant="secondary" icon={Pencil} onClick={openEdit}>
+              Edit
+            </Button>
             <Button variant="secondary" icon={RotateCcw} onClick={() => setRotateOpen(true)}>
               Rotate code
             </Button>
+            {classroom.archivedAt ? (
+              <Button
+                variant="secondary"
+                icon={ArchiveRestore}
+                loading={restoring}
+                onClick={restoreArchived}
+              >
+                Restore
+              </Button>
+            ) : (
+              <Button variant="secondary" icon={Archive} onClick={() => setArchiveOpen(true)}>
+                Archive
+              </Button>
+            )}
             <Button variant="mint" icon={UserPlus} onClick={() => setAddOpen(true)}>
               Add student
             </Button>
@@ -311,9 +475,23 @@ export default function TeacherClassDetail() {
         title={`Roster · ${students.length}`}
         description="Each student gets a one-time PIN. Open a student to see their diagnosis, mastery result and Teacher Insight."
         action={
-          <Button variant="secondary" icon={Plus} onClick={() => setAddOpen(true)}>
-            Add student
-          </Button>
+          classroom.archivedAt ? null : (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                icon={Upload}
+                onClick={() => {
+                  setImportError("");
+                  setImportOpen(true);
+                }}
+              >
+                Import CSV
+              </Button>
+              <Button variant="secondary" icon={Plus} onClick={() => setAddOpen(true)}>
+                Add student
+              </Button>
+            </div>
+          )
         }
       />
 
@@ -323,9 +501,11 @@ export default function TeacherClassDetail() {
           title="No students yet"
           description="Add each student by name. The server returns a 4-digit PIN once — share it with that student."
           action={
-            <Button variant="mint" icon={UserPlus} onClick={() => setAddOpen(true)}>
-              Add the first student
-            </Button>
+            classroom.archivedAt ? null : (
+              <Button variant="mint" icon={UserPlus} onClick={() => setAddOpen(true)}>
+                Add the first student
+              </Button>
+            )
           }
         />
       ) : (
@@ -457,9 +637,14 @@ export default function TeacherClassDetail() {
         title={pinInfo?.kind === "created" ? "Student added" : "New PIN"}
         description="This PIN is shown once. Give it to the student now; it cannot be read again."
         footer={
-          <Button variant="mint" onClick={() => setPinInfo(null)}>
-            Done
-          </Button>
+          <>
+            <Button variant="secondary" icon={Printer} onClick={printOne}>
+              Print PIN slip
+            </Button>
+            <Button variant="mint" onClick={() => setPinInfo(null)}>
+              Done
+            </Button>
+          </>
         }
       >
         {pinInfo ? (
@@ -538,6 +723,212 @@ export default function TeacherClassDetail() {
             Then give the new code only to your roster.
           </p>
         </div>
+      </Modal>
+
+      <Modal
+        open={editOpen}
+        onClose={() => (savingEdit ? null : setEditOpen(false))}
+        title="Edit class"
+        description="Update the class name, subject or grade. The class code and roster stay the same."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditOpen(false)} disabled={savingEdit}>
+              Cancel
+            </Button>
+            <Button variant="mint" icon={Pencil} onClick={submitEdit} loading={savingEdit}>
+              Save changes
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={submitEdit} className="space-y-4" noValidate>
+          {editError ? <Alert tone="error">{editError}</Alert> : null}
+
+          <Field id="editClassName" label="Class name">
+            <input
+              id="editClassName"
+              type="text"
+              required
+              maxLength={80}
+              value={editForm.name}
+              onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
+              className={inputClasses}
+            />
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="editClassSubject" label="Subject">
+              <input
+                id="editClassSubject"
+                type="text"
+                maxLength={80}
+                value={editForm.subject}
+                onChange={(event) =>
+                  setEditForm((current) => ({ ...current, subject: event.target.value }))
+                }
+                className={inputClasses}
+              />
+            </Field>
+
+            <Field id="editClassGrade" label="Grade" hint="Optional.">
+              <select
+                id="editClassGrade"
+                value={editForm.grade}
+                onChange={(event) =>
+                  setEditForm((current) => ({ ...current, grade: event.target.value }))
+                }
+                className={inputClasses}
+              >
+                <option value="">Not set</option>
+                {[8, 9, 10, 11, 12].map((grade) => (
+                  <option key={grade} value={grade}>
+                    Grade {grade}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        open={archiveOpen}
+        onClose={() => (archiving ? null : setArchiveOpen(false))}
+        title="Archive this class"
+        description="Archived classes keep their roster and learning history, but students cannot sign in and the class code stops working."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setArchiveOpen(false)} disabled={archiving}>
+              Cancel
+            </Button>
+            <Button variant="secondary" icon={Archive} onClick={confirmArchive} loading={archiving}>
+              Archive class
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-slate-600">
+          Archive <span className="font-semibold text-ink-950">{classroom.name}</span>? You can restore it
+          from your class list at any time. Nothing is deleted.
+        </p>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => (importing ? null : setImportOpen(false))}
+        title="Import a roster"
+        description="Paste one student name per line. The first column is used; an optional header row is ignored."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setImportOpen(false)} disabled={importing}>
+              Cancel
+            </Button>
+            <Button variant="mint" icon={Upload} onClick={submitImport} loading={importing}>
+              Import students
+            </Button>
+          </>
+        }
+      >
+        <form onSubmit={submitImport} className="space-y-4" noValidate>
+          {importError ? <Alert tone="error">{importError}</Alert> : null}
+
+          <Field
+            id="rosterCsv"
+            label="Student names"
+            hint="One name per line, or paste a name column from a spreadsheet. Up to 100 names at a time."
+          >
+            <textarea
+              id="rosterCsv"
+              rows={8}
+              value={csv}
+              onChange={(event) => setCsv(event.target.value)}
+              className={`${inputClasses} font-mono text-xs`}
+              placeholder={"Naledi Mokoena\nThabo Dlamini\nAnele Jacobs"}
+            />
+          </Field>
+
+          <p className="text-xs leading-5 text-slate-500">
+            Names already on the roster are skipped. Each new student gets a fresh 4-digit PIN that is
+            shown once, after the import.
+          </p>
+        </form>
+      </Modal>
+
+      <Modal
+        open={Boolean(importResult)}
+        onClose={() => setImportResult(null)}
+        title="Roster imported"
+        description="Give each student their PIN now. It cannot be read again."
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              icon={Printer}
+              onClick={printImported}
+              disabled={!importResult?.imported?.length}
+            >
+              Print PIN slips
+            </Button>
+            <Button variant="mint" onClick={() => setImportResult(null)}>
+              Done
+            </Button>
+          </>
+        }
+      >
+        {importResult ? (
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-slate-600">
+              Imported <span className="font-semibold text-ink-950">{importResult.imported.length}</span>{" "}
+              student{importResult.imported.length === 1 ? "" : "s"}
+              {importResult.skipped.length
+                ? ` and skipped ${importResult.skipped.length} row${
+                    importResult.skipped.length === 1 ? "" : "s"
+                  }`
+                : ""}
+              .
+            </p>
+
+            {importResult.imported.length ? (
+              <div className="max-h-64 overflow-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 bg-slate-50 text-[10px] uppercase tracking-[0.14em] text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 font-semibold">Student</th>
+                      <th className="px-3 py-2 font-semibold">PIN</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {importResult.imported.map((entry) => (
+                      <tr key={entry.student.id}>
+                        <td className="px-3 py-2 font-medium text-ink-950">
+                          {entry.student.displayName}
+                        </td>
+                        <td className="px-3 py-2 font-mono font-semibold tracking-[0.18em]">
+                          {entry.pin}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
+            {importResult.skipped.length ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-900">
+                  Skipped rows
+                </p>
+                <ul className="mt-2 space-y-1 text-xs leading-5 text-amber-900">
+                  {importResult.skipped.map((item, index) => (
+                    <li key={`${item.name}-${index}`}>
+                      <span className="font-semibold">{item.name}</span> — {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </Modal>
 
       <Modal

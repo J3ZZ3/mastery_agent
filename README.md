@@ -258,9 +258,10 @@ teachers ──< classes ──< students ──< learning_sessions
                  └── auth_sessions (teacher or student principal)
 ```
 
-- `teachers`: email (unique, case-insensitive), name, scrypt password hash.
+- `teachers`: email (unique, case-insensitive), name, scrypt password hash and `email_verified_at`.
 - `classes`: name, subject, grade, unique join code, owner (`teacher_id`) and the time the teacher attested to having school/guardian permission (`consent_attested_at`).
 - `students`: display name (unique per class), scrypt PIN hash, last seen.
+- `teacher_tokens`: single-use password-reset and email-verification tokens. Only a SHA-256 hash is stored; each row has a purpose, expiry and `used_at`.
 - `learning_sessions`: the orchestrator snapshot as JSONB, plus `class_id`, `student_id`, status, attempt and timestamps for fast queries.
 - `auth_sessions`: hashed random token, role, expiry. The browser only holds the raw token in an `HttpOnly`, `SameSite=Lax` cookie; Postgres stores a SHA-256 hash.
 
@@ -270,22 +271,29 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/auth/teacher/signup` | create a teacher account and session |
+| `POST` | `/api/auth/teacher/signup` | create a teacher account and session; sends a verification email |
 | `POST` | `/api/auth/teacher/login` | teacher sign-in |
+| `POST` | `/api/auth/teacher/forgot-password` | send a single-use reset link (always returns `200`) |
+| `POST` | `/api/auth/teacher/reset-password` | consume a reset token, change the password and revoke every teacher session |
+| `POST` | `/api/auth/teacher/verify-email` | consume a verification token |
+| `POST` | `/api/auth/teacher/resend-verification` | send a fresh verification link to the signed-in teacher |
 | `POST` | `/api/auth/student/login` | class code + name + PIN |
 | `POST` | `/api/auth/logout` | delete the session and clear the cookie |
 | `GET` | `/api/auth/me` | current teacher or student principal |
 | `GET` | `/api/classes` | teacher's active classes with student counts |
+| `GET` | `/api/classes/archived` | teacher's archived classes with student counts |
 | `POST` | `/api/classes` | create a class and join code (requires `consentAttested: true`) |
 | `GET` | `/api/classes/:classId` | class + roster (owner only) |
 | `PATCH` | `/api/classes/:classId` | rename or change subject/grade |
-| `DELETE` | `/api/classes/:classId` | archive a class |
+| `DELETE` | `/api/classes/:classId` | archive a class (reversible) |
+| `POST` | `/api/classes/:classId/restore` | restore an archived class |
 | `POST` | `/api/classes/:classId/join-code` | rotate the class code; the old code stops working |
 | `DELETE` | `/api/classes/:classId/permanent` | permanently delete the class, roster and learning sessions (`{ "confirm": true }`) |
 | `GET` | `/api/classes/:classId/students` | roster without PINs |
 | `GET` | `/api/classes/:classId/progress` | class stats + per-student learning status (owner only) |
 | `GET` | `/api/classes/:classId/students/:studentId/progress` | one student's current cycle, mastery result and Teacher Insight (owner only) |
 | `POST` | `/api/classes/:classId/students` | add a student; returns the PIN **once** |
+| `POST` | `/api/classes/:classId/students/import` | import a CSV roster (first column is the name, up to 100 rows); returns a PIN for each new student |
 | `POST` | `/api/classes/:classId/students/:studentId/pin` | reset a PIN; returns the new PIN once |
 | `DELETE` | `/api/classes/:classId/students/:studentId/history` | erase one student's learning history but keep them on the roster |
 | `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student and erase their learning history |
@@ -311,10 +319,13 @@ The classroom pilot has its own frontend, separate from the demo workspace:
 | --- | --- | --- |
 | `/portal` | public | choose teacher or student access |
 | `/privacy` | public | POPIA-aware pilot privacy notice |
-| `/portal/teacher/login` | teacher | sign in |
+| `/portal/teacher/login` | teacher | sign in, forgot-password link |
 | `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`) |
-| `/portal/teacher` | teacher | class list, create class with consent attestation, copy class code |
-| `/portal/teacher/classes/:classId` | teacher | roster, class progress stats, add student, one-time PIN, reset PIN, rotate class code, remove student, erase history, delete class |
+| `/portal/teacher/forgot-password` | teacher | request a password-reset link |
+| `/portal/teacher/reset-password` | teacher | choose a new password from an emailed token |
+| `/portal/teacher/verify-email` | teacher | verify an emailed token |
+| `/portal/teacher` | teacher | class list, create class with consent attestation, verification banner, archived classes and restore |
+| `/portal/teacher/classes/:classId` | teacher | roster, class stats, edit/archive/restore, add student, CSV import, printable PIN slips, rotate code, remove student, erase history, delete class |
 | `/portal/teacher/classes/:classId/students/:studentId` | teacher | one student's diagnosis, mastery result and Teacher Insight |
 | `/portal/student` | student | join with class code + name + PIN |
 | `/portal/student/home` | student | class card, class code, learning status and start/continue CTA |
@@ -339,6 +350,11 @@ Teachers see the class roster with a live learning status, then open any student
 - Set `CORS_ORIGINS` to the exact frontend origins in production. Rotating a class code stops new sign-ins with the old code but does not sign out students who are already in a session.
 - Set `SESSION_COOKIE_SECURE=true` in production (it defaults to true when `NODE_ENV=production`).
 - `TEACHER_SIGNUP_OPEN=false` closes public teacher registration once the pilot cohort is enrolled.
+- Teacher email verification and password reset use single-use tokens stored only as SHA-256 hashes. Links expire after `EMAIL_VERIFICATION_TTL_HOURS` (default 48) and `PASSWORD_RESET_TTL_MINUTES` (default 30). A password reset revokes every existing teacher session.
+- `EMAIL_DELIVERY=console` (default) prints the verification/reset link to the server log, which is enough for a supervised pilot. Set `EMAIL_DELIVERY=resend` with `RESEND_API_KEY` and `EMAIL_FROM` for real delivery. Set `APP_ORIGIN` so emailed links point at the deployed frontend.
+- `REQUIRE_TEACHER_EMAIL_VERIFICATION=false` by default. Set it to `true` to block class management until the teacher opens the verification link; the dashboard shows a resend banner either way.
+- Archiving a class keeps its roster and learning history but blocks new student sign-ins and hides it from the active list. Restoring it makes the same class code work again. Permanent deletion is still the only erasure path.
+- CSV import takes the first column of each line, ignores an optional header row and skips names that are already on the roster or repeated in the file. Imported PINs are returned once, so the teacher can print the slips immediately.
 - Auth endpoints are rate-limited per IP and path. The limiter is in-memory, so use Redis before running more than one API instance.
 - A 4-digit PIN has 10,000 combinations. The rate limiter is the main brute-force control for a pilot; add a per-student lockout or longer PIN before a wider rollout.
 - For POPIA, keep student data minimal (display name only), publish a privacy notice, and obtain guardian consent before using real learner data. The AI provider receives workflow content when `AI_PROVIDER=openai`; review that data flow before a real pilot.
@@ -382,8 +398,11 @@ a full six-agent classroom run persisted against the correct `class_id` and
 `student_id`, and the teacher progress endpoints (class stats, per-student
 detail, Teacher Insight, and cross-teacher isolation). The pilot-safety suite
 adds consent enforcement, class-code rotation, learning-history erasure,
-permanent class deletion and the untrusted-origin guard. Without a database
-those tests skip and the demo suite still runs.
+permanent class deletion and the untrusted-origin guard. The teacher-lifecycle
+suite covers verification enforcement, single-use tokens, password reset and
+session revocation; the class-operations suite covers editing, CSV import,
+archive/restore and cross-teacher isolation for those actions. Without a
+database those tests skip and the demo suite still runs.
 
 `.github/workflows/ci.yml` runs `npm ci`, the full test suite against a
 Postgres 16 service, and `npm run build` on every push and pull request.

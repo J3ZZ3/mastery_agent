@@ -42,6 +42,21 @@ export const config = {
   sessionCookieSecure: asBoolean(process.env.SESSION_COOKIE_SECURE, nodeEnv === "production"),
   teacherSignupOpen: asBoolean(process.env.TEACHER_SIGNUP_OPEN, true),
 
+  // Absolute origin used in emailed links (password reset, verification).
+  appOrigin: (process.env.APP_ORIGIN || clientOrigin).replace(/\/$/, ""),
+  requireTeacherEmailVerification: asBoolean(
+    process.env.REQUIRE_TEACHER_EMAIL_VERIFICATION,
+    false,
+  ),
+
+  // Teacher account lifecycle. "console" prints the message to the server log,
+  // which is enough for a pilot; use "resend" for real delivery.
+  emailDelivery: (process.env.EMAIL_DELIVERY || "console").toLowerCase(),
+  emailFrom: process.env.EMAIL_FROM || "MASTERY <no-reply@localhost>",
+  resendApiKey: process.env.RESEND_API_KEY || "",
+  passwordResetTtlMinutes: asNumber(process.env.PASSWORD_RESET_TTL_MINUTES, 30),
+  emailVerificationTtlHours: asNumber(process.env.EMAIL_VERIFICATION_TTL_HOURS, 48),
+
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),

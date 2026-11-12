@@ -26,6 +26,19 @@ export const requestSchemas = {
     email: z.string().trim().email().max(200),
     password: z.string().min(1).max(200),
   }),
+  teacherForgotPassword: z.object({
+    email: z.string().trim().email().max(200),
+  }),
+  teacherResetPassword: z.object({
+    token: z.string().trim().min(20).max(300),
+    password: z.string().min(8).max(200),
+  }),
+  teacherVerifyEmail: z.object({
+    token: z.string().trim().min(20).max(300),
+  }),
+  importStudents: z.object({
+    csv: z.string().trim().min(1).max(20_000),
+  }),
   studentLogin: z.object({
     joinCode: z
       .string()

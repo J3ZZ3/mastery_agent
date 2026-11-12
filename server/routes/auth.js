@@ -22,10 +22,19 @@ import {
   authenticateTeacher,
   signupTeacher,
 } from "../services/classroomService.js";
+import {
+  issueEmailVerification,
+  requestTeacherPasswordReset,
+  resendTeacherVerification,
+  resetTeacherPassword,
+  verifyTeacherEmail,
+} from "../services/teacherAccountService.js";
 
 export const authRouter = Router();
 
 const authLimiter = createRateLimiter({ windowMs: 60_000, max: 20 });
+// Password reset and verification links are sensitive; keep the window tight.
+const sensitiveLimiter = createRateLimiter({ windowMs: 10 * 60_000, max: 10 });
 
 authRouter.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
@@ -61,6 +70,13 @@ authRouter.post(
 
     const body = parseBody(requestSchemas.teacherSignup, req.body, "signup");
     const teacher = await signupTeacher(body);
+
+    // Verification is best-effort: a mail failure must not lose the account or
+    // the session. The teacher can resend the link from the dashboard.
+    await issueEmailVerification(teacher).catch((error) => {
+      console.error("[MASTERY] Could not send the verification email:", error.message);
+    });
+
     await startSession(res, { role: "teacher", teacherId: teacher.id });
     res.status(201).json({ teacher });
   }),
@@ -74,6 +90,54 @@ authRouter.post(
     const teacher = await authenticateTeacher(body);
     await startSession(res, { role: "teacher", teacherId: teacher.id });
     res.json({ teacher });
+  }),
+);
+
+authRouter.post(
+  "/teacher/forgot-password",
+  sensitiveLimiter,
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.teacherForgotPassword, req.body, "password reset");
+    try {
+      await requestTeacherPasswordReset(body.email);
+    } catch (error) {
+      // Never reveal whether the address exists or whether mail delivery failed.
+      console.error("[MASTERY] Could not send the password reset email:", error.message);
+    }
+    res.json({ ok: true });
+  }),
+);
+
+authRouter.post(
+  "/teacher/reset-password",
+  sensitiveLimiter,
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.teacherResetPassword, req.body, "password reset");
+    await resetTeacherPassword(body.token, body.password);
+    clearSessionCookie(res);
+    res.json({ ok: true });
+  }),
+);
+
+authRouter.post(
+  "/teacher/verify-email",
+  sensitiveLimiter,
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.teacherVerifyEmail, req.body, "email verification");
+    const teacher = await verifyTeacherEmail(body.token);
+    res.json({ ok: true, teacher });
+  }),
+);
+
+authRouter.post(
+  "/teacher/resend-verification",
+  sensitiveLimiter,
+  asyncRoute(async (req, res) => {
+    if (!req.auth || req.auth.role !== "teacher") {
+      throw new AppError(401, "Teacher sign-in required.");
+    }
+    const result = await resendTeacherVerification(req.auth.teacher.id);
+    res.json({ ok: true, ...result });
   }),
 );
 

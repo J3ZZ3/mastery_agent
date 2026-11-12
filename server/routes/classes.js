@@ -11,10 +11,13 @@ import {
   deleteStudentHistory,
   getClass,
   getStudentClass,
+  importStudents,
+  listArchivedClasses,
   listClasses,
   listStudents,
   removeStudent,
   resetStudentPin,
+  restoreClass,
   rotateJoinCode,
   updateClass,
 } from "../services/classroomService.js";
@@ -49,6 +52,13 @@ classesRouter.get(
   }),
 );
 
+classesRouter.get(
+  "/archived",
+  asyncRoute(async (req, res) => {
+    res.json({ classes: await listArchivedClasses(teacherId(req)) });
+  }),
+);
+
 classesRouter.post(
   "/",
   asyncRoute(async (req, res) => {
@@ -78,6 +88,14 @@ classesRouter.delete(
   "/:classId",
   asyncRoute(async (req, res) => {
     const classroom = await archiveClass(teacherId(req), req.params.classId);
+    res.json({ class: classroom });
+  }),
+);
+
+classesRouter.post(
+  "/:classId/restore",
+  asyncRoute(async (req, res) => {
+    const classroom = await restoreClass(teacherId(req), req.params.classId);
     res.json({ class: classroom });
   }),
 );
@@ -131,6 +149,15 @@ classesRouter.post(
   asyncRoute(async (req, res) => {
     const body = parseBody(requestSchemas.addStudent, req.body, "student");
     const result = await addStudent(teacherId(req), req.params.classId, body);
+    res.status(201).json(result);
+  }),
+);
+
+classesRouter.post(
+  "/:classId/students/import",
+  asyncRoute(async (req, res) => {
+    const body = parseBody(requestSchemas.importStudents, req.body, "roster import");
+    const result = await importStudents(teacherId(req), req.params.classId, body);
     res.status(201).json(result);
   }),
 );

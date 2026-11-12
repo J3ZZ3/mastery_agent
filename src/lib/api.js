@@ -66,10 +66,19 @@ export const api = {
     request("/auth/teacher/signup", { method: "POST", body: JSON.stringify(body) }),
   teacherLogin: (body) =>
     request("/auth/teacher/login", { method: "POST", body: JSON.stringify(body) }),
+  teacherForgotPassword: (body) =>
+    request("/auth/teacher/forgot-password", { method: "POST", body: JSON.stringify(body) }),
+  teacherResetPassword: (body) =>
+    request("/auth/teacher/reset-password", { method: "POST", body: JSON.stringify(body) }),
+  teacherVerifyEmail: (body) =>
+    request("/auth/teacher/verify-email", { method: "POST", body: JSON.stringify(body) }),
+  resendTeacherVerification: () =>
+    request("/auth/teacher/resend-verification", { method: "POST" }),
   studentLogin: (body) =>
     request("/auth/student/login", { method: "POST", body: JSON.stringify(body) }),
   logout: () => request("/auth/logout", { method: "POST" }),
   classes: () => request("/classes"),
+  archivedClasses: () => request("/classes/archived"),
   createClass: (body) =>
     request("/classes", { method: "POST", body: JSON.stringify(body) }),
   classDetail: (classId) => request(`/classes/${classId}`),
@@ -79,6 +88,8 @@ export const api = {
   updateClass: (classId, body) =>
     request(`/classes/${classId}`, { method: "PATCH", body: JSON.stringify(body) }),
   archiveClass: (classId) => request(`/classes/${classId}`, { method: "DELETE" }),
+  restoreClass: (classId) =>
+    request(`/classes/${classId}/restore`, { method: "POST" }),
   rotateJoinCode: (classId) =>
     request(`/classes/${classId}/join-code`, { method: "POST" }),
   deleteClassPermanently: (classId) =>
@@ -88,6 +99,11 @@ export const api = {
     }),
   addStudent: (classId, body) =>
     request(`/classes/${classId}/students`, { method: "POST", body: JSON.stringify(body) }),
+  importStudents: (classId, body) =>
+    request(`/classes/${classId}/students/import`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   resetStudentPin: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}/pin`, { method: "POST" }),
   removeStudent: (classId, studentId) =>
