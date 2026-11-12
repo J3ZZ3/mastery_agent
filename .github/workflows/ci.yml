@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mastery
+          POSTGRES_PASSWORD: mastery
+          POSTGRES_DB: mastery
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mastery -d mastery"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://mastery:mastery@localhost:5432/mastery
+      AI_PROVIDER: demo
+      DEMO_DELAY_MS: "0"
+      SESSION_COOKIE_SECURE: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build client
+        run: npm run build

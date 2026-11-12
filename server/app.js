@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { apiRouter } from "./routes/index.js";
 import { config } from "./config.js";
 import { attachAuth } from "./auth/middleware.js";
+import { requireTrustedOrigin } from "./lib/originGuard.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "..", "dist");
@@ -32,6 +33,7 @@ export function createApp() {
     next();
   });
 
+  app.use("/api", requireTrustedOrigin);
   app.use("/api", attachAuth);
   app.use("/api", apiRouter);
   app.use("/api", (_req, res) => {

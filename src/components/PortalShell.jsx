@@ -111,6 +111,11 @@ export default function PortalShell() {
         <p>
           Classroom pilot. Student accounts are managed by the teacher; no student email is required.
           Diagnoses remain evidence-supported hypotheses, and the teacher makes the final educational decision.
+          {" "}
+          <Link to="/privacy" className="font-semibold text-slate-600 underline hover:text-ink-950">
+            Privacy notice
+          </Link>
+          .
         </p>
       </footer>
 

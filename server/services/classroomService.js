@@ -21,6 +21,7 @@ const classDto = (row) => ({
   subject: row.subject,
   grade: row.grade,
   joinCode: row.join_code,
+  consentAttestedAt: row.consent_attested_at,
   archivedAt: row.archived_at,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
@@ -100,13 +101,21 @@ export async function getTeacher(teacherId) {
 /* Classes                                                             */
 /* ------------------------------------------------------------------ */
 
-export async function createClass(teacherId, { name, subject, grade }) {
+export async function createClass(teacherId, { name, subject, grade, consentAttested }) {
+  if (consentAttested !== true) {
+    throw new AppError(
+      400,
+      "Confirm that you have permission to create student accounts before creating a class.",
+    );
+  }
+
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const joinCode = generateJoinCode();
     try {
       const { rows } = await query(
-        `insert into classes (id, teacher_id, name, subject, grade, join_code)
-         values ($1, $2, $3, $4, $5, $6)
+        `insert into classes
+           (id, teacher_id, name, subject, grade, join_code, consent_attested_at)
+         values ($1, $2, $3, $4, $5, $6, now())
          returning *`,
         [newId("cls"), teacherId, normalizeName(name), subject, grade ?? null, joinCode],
       );
@@ -173,6 +182,45 @@ export async function archiveClass(teacherId, classId) {
   );
   if (!rows[0]) throw new AppError(404, "Class not found.");
   return classDto(rows[0]);
+}
+
+/**
+ * Replace the join code. Existing students stay signed in and their PINs keep
+ * working; the old code can no longer be used to sign in.
+ */
+export async function rotateJoinCode(teacherId, classId) {
+  await requireOwnedClass(teacherId, classId);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const joinCode = generateJoinCode();
+    try {
+      const { rows } = await query(
+        `update classes
+         set join_code = $3, updated_at = now()
+         where id = $1 and teacher_id = $2
+         returning *`,
+        [classId, teacherId, joinCode],
+      );
+      return classDto(rows[0]);
+    } catch (error) {
+      if (error.code !== "23505") throw error;
+    }
+  }
+
+  throw new AppError(500, "Could not allocate a new class code. Please try again.");
+}
+
+/**
+ * Hard-delete a class, its roster, learning sessions and student sessions.
+ * This is the POPIA erasure path, not the reversible archive action.
+ */
+export async function deleteClassPermanently(teacherId, classId) {
+  const { rowCount } = await query(
+    "delete from classes where id = $1 and teacher_id = $2",
+    [classId, teacherId],
+  );
+  if (!rowCount) throw new AppError(404, "Class not found.");
+  return { ok: true };
 }
 
 /* ------------------------------------------------------------------ */
@@ -260,6 +308,20 @@ export async function removeStudent(teacherId, classId, studentId) {
   );
   if (!rowCount) throw new AppError(404, "Student not found in this class.");
   return { ok: true };
+}
+
+/**
+ * Erase one student's learning history while keeping them on the roster. The
+ * student can start a fresh cycle afterwards.
+ */
+export async function deleteStudentHistory(teacherId, classId, studentId) {
+  await requireOwnedClass(teacherId, classId);
+  const student = await getStudent(teacherId, classId, studentId);
+  const { rowCount } = await query(
+    "delete from learning_sessions where student_id = $1 and class_id = $2",
+    [student.id, classId],
+  );
+  return { ok: true, deletedSessions: rowCount };
 }
 
 /* ------------------------------------------------------------------ */

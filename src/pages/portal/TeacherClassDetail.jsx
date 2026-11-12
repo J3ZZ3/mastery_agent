@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Activity,
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   Link2,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
   UserPlus,
   Users,
@@ -36,6 +37,7 @@ import CopyButton from "../../components/CopyButton.jsx";
 
 export default function TeacherClassDetail() {
   const { classId } = useParams();
+  const navigate = useNavigate();
   const { notify } = useApp();
   const { refresh } = useAuth();
 
@@ -54,6 +56,13 @@ export default function TeacherClassDetail() {
 
   const [removeTarget, setRemoveTarget] = useState(null);
   const [removing, setRemoving] = useState(false);
+
+  const [rotateOpen, setRotateOpen] = useState(false);
+  const [rotating, setRotating] = useState(false);
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -131,6 +140,33 @@ export default function TeacherClassDetail() {
     }
   };
 
+  const confirmRotate = async () => {
+    setRotating(true);
+    try {
+      const result = await api.rotateJoinCode(classId);
+      setData((current) => (current ? { ...current, class: result.class } : current));
+      setRotateOpen(false);
+      notify("Class code rotated. Share the new code with your students.", "success");
+    } catch (err) {
+      notify(err.message || "Could not rotate the class code.", "error");
+    } finally {
+      setRotating(false);
+    }
+  };
+
+  const confirmDeleteClass = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteClassPermanently(classId);
+      notify("Class and all of its data were permanently deleted.", "success");
+      navigate("/portal/teacher", { replace: true });
+    } catch (err) {
+      notify(err.message || "Could not delete the class.", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-slate-600">
@@ -196,9 +232,21 @@ export default function TeacherClassDetail() {
               {classroom.subject}
               {classroom.grade ? ` · Grade ${classroom.grade}` : ""}
             </p>
+            {classroom.consentAttestedAt ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Consent attested {formatDate(classroom.consentAttestedAt)}
+              </p>
+            ) : (
+              <p className="mt-1 text-[11px] font-semibold text-amber-700">
+                No consent attestation on file. Confirm permission before adding learners.
+              </p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <CopyButton value={classroom.joinCode} label="Copy class code" />
+            <Button variant="secondary" icon={RotateCcw} onClick={() => setRotateOpen(true)}>
+              Rotate code
+            </Button>
             <Button variant="mint" icon={UserPlus} onClick={() => setAddOpen(true)}>
               Add student
             </Button>
@@ -345,6 +393,28 @@ export default function TeacherClassDetail() {
         </Card>
       )}
 
+      <Card className="border-rose-200 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-xl">
+            <h2 className="text-base font-bold text-rose-900">Danger zone</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              Permanently delete this class, its roster, PINs and every learning session. This is the
+              erasure path for a pilot cohort and cannot be undone.
+            </p>
+          </div>
+          <Button
+            variant="danger"
+            icon={Trash2}
+            onClick={() => {
+              setDeleteText("");
+              setDeleteOpen(true);
+            }}
+          >
+            Delete class permanently
+          </Button>
+        </div>
+      </Card>
+
       <Modal
         open={addOpen}
         onClose={() => (adding ? null : setAddOpen(false))}
@@ -421,7 +491,7 @@ export default function TeacherClassDetail() {
         open={Boolean(removeTarget)}
         onClose={() => (removing ? null : setRemoveTarget(null))}
         title="Remove student"
-        description="This removes the student from the roster and deletes their PIN. Their learning history is not affected in this milestone."
+        description="This removes the student from the roster, deletes their PIN and permanently deletes their learning history."
         footer={
           <>
             <Button variant="secondary" onClick={() => setRemoveTarget(null)} disabled={removing}>
@@ -435,8 +505,79 @@ export default function TeacherClassDetail() {
       >
         <p className="text-sm leading-6 text-slate-600">
           Remove <span className="font-semibold text-ink-950">{removeTarget?.displayName}</span> from{" "}
-          <span className="font-semibold text-ink-950">{classroom.name}</span>?
+          <span className="font-semibold text-ink-950">{classroom.name}</span>? Their diagnosis, mastery
+          results and Teacher Insight will be erased.
         </p>
+      </Modal>
+
+      <Modal
+        open={rotateOpen}
+        onClose={() => (rotating ? null : setRotateOpen(false))}
+        title="Rotate the class code"
+        description="A new code is generated immediately. The old code stops working for new sign-ins."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRotateOpen(false)} disabled={rotating}>
+              Cancel
+            </Button>
+            <Button variant="mint" icon={RotateCcw} onClick={confirmRotate} loading={rotating}>
+              Rotate code
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm leading-6 text-slate-600">
+          <p>
+            Current code:{" "}
+            <span className="font-mono font-semibold tracking-[0.18em] text-ink-950">
+              {classroom.joinCode}
+            </span>
+          </p>
+          <p>
+            Students who are already signed in stay signed in. Use this if the code was shared too widely.
+            Then give the new code only to your roster.
+          </p>
+        </div>
+      </Modal>
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => (deleting ? null : setDeleteOpen(false))}
+        title="Delete this class permanently"
+        description="This erases the class, every student, every PIN and every learning session. It cannot be undone."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              icon={Trash2}
+              onClick={confirmDeleteClass}
+              loading={deleting}
+              disabled={deleteText !== classroom.name}
+            >
+              Delete permanently
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-sm leading-6 text-slate-600">
+          <p>
+            Type <span className="font-semibold text-ink-950">{classroom.name}</span> to confirm.
+          </p>
+          <Field id="deleteClassConfirm" label="Class name">
+            <input
+              id="deleteClassConfirm"
+              type="text"
+              value={deleteText}
+              onChange={(event) => setDeleteText(event.target.value)}
+              className={inputClasses}
+              autoComplete="off"
+              placeholder={classroom.name}
+            />
+          </Field>
+        </div>
       </Modal>
 
       <p className="flex items-start gap-2 text-xs leading-5 text-slate-500">

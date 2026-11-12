@@ -259,7 +259,7 @@ teachers ──< classes ──< students ──< learning_sessions
 ```
 
 - `teachers`: email (unique, case-insensitive), name, scrypt password hash.
-- `classes`: name, subject, grade, unique join code, owner (`teacher_id`).
+- `classes`: name, subject, grade, unique join code, owner (`teacher_id`) and the time the teacher attested to having school/guardian permission (`consent_attested_at`).
 - `students`: display name (unique per class), scrypt PIN hash, last seen.
 - `learning_sessions`: the orchestrator snapshot as JSONB, plus `class_id`, `student_id`, status, attempt and timestamps for fast queries.
 - `auth_sessions`: hashed random token, role, expiry. The browser only holds the raw token in an `HttpOnly`, `SameSite=Lax` cookie; Postgres stores a SHA-256 hash.
@@ -276,16 +276,19 @@ Every teacher route resolves the class through `teacher_id`, so a cross-teacher 
 | `POST` | `/api/auth/logout` | delete the session and clear the cookie |
 | `GET` | `/api/auth/me` | current teacher or student principal |
 | `GET` | `/api/classes` | teacher's active classes with student counts |
-| `POST` | `/api/classes` | create a class and join code |
+| `POST` | `/api/classes` | create a class and join code (requires `consentAttested: true`) |
 | `GET` | `/api/classes/:classId` | class + roster (owner only) |
 | `PATCH` | `/api/classes/:classId` | rename or change subject/grade |
 | `DELETE` | `/api/classes/:classId` | archive a class |
+| `POST` | `/api/classes/:classId/join-code` | rotate the class code; the old code stops working |
+| `DELETE` | `/api/classes/:classId/permanent` | permanently delete the class, roster and learning sessions (`{ "confirm": true }`) |
 | `GET` | `/api/classes/:classId/students` | roster without PINs |
 | `GET` | `/api/classes/:classId/progress` | class stats + per-student learning status (owner only) |
 | `GET` | `/api/classes/:classId/students/:studentId/progress` | one student's current cycle, mastery result and Teacher Insight (owner only) |
 | `POST` | `/api/classes/:classId/students` | add a student; returns the PIN **once** |
 | `POST` | `/api/classes/:classId/students/:studentId/pin` | reset a PIN; returns the new PIN once |
-| `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student |
+| `DELETE` | `/api/classes/:classId/students/:studentId/history` | erase one student's learning history but keep them on the roster |
+| `DELETE` | `/api/classes/:classId/students/:studentId` | remove a student and erase their learning history |
 | `GET` | `/api/student/class` | the signed-in student's class |
 | `GET` | `/api/student/sessions` | the student's progress, current session and history |
 | `POST` | `/api/student/sessions` | start or resume the student's own cycle |
@@ -307,10 +310,11 @@ The classroom pilot has its own frontend, separate from the demo workspace:
 | Route | Who | Purpose |
 | --- | --- | --- |
 | `/portal` | public | choose teacher or student access |
+| `/privacy` | public | POPIA-aware pilot privacy notice |
 | `/portal/teacher/login` | teacher | sign in |
 | `/portal/teacher/signup` | teacher | create an account (can be closed with `TEACHER_SIGNUP_OPEN=false`) |
-| `/portal/teacher` | teacher | class list, create class, copy class code |
-| `/portal/teacher/classes/:classId` | teacher | roster, class progress stats, add student, one-time PIN, reset PIN, remove student |
+| `/portal/teacher` | teacher | class list, create class with consent attestation, copy class code |
+| `/portal/teacher/classes/:classId` | teacher | roster, class progress stats, add student, one-time PIN, reset PIN, rotate class code, remove student, erase history, delete class |
 | `/portal/teacher/classes/:classId/students/:studentId` | teacher | one student's diagnosis, mastery result and Teacher Insight |
 | `/portal/student` | student | join with class code + name + PIN |
 | `/portal/student/home` | student | class card, class code, learning status and start/continue CTA |
@@ -326,13 +330,18 @@ Teachers see the class roster with a live learning status, then open any student
 
 ### Pilot safety notes
 
+- Creating a class requires an explicit `consentAttested: true` attestation. The timestamp is stored as `classes.consent_attested_at`. The UI also requires the teacher to tick a checkbox confirming school/guardian permission and that the privacy notice was shared.
+- The public `/privacy` page explains what is stored, who can see it, the AI-provider data flow, retention and erasure. Add the school or operator's information-officer contact before using real learner data.
+- A teacher can rotate a class code, erase one student's learning history, or permanently delete a class and all of its data. Removing a student also erases their learning history. These are the pilot erasure controls; they are not a substitute for a documented POPIA process.
+- Unsafe API requests (`POST`, `PATCH`, `DELETE`) are rejected with `403` when the browser `Origin` is not the same host or listed in `CORS_ORIGINS`. Requests with no `Origin` (server-to-server, curl, tests) are allowed. Cookies remain `HttpOnly` and `SameSite=Lax`.
 - Student sessions expire after `STUDENT_SESSION_HOURS` (default 12) because devices may be shared. Teacher sessions last `SESSION_TTL_DAYS` (default 30).
-- Set `CORS_ORIGINS` to the exact frontend origins in production. Requests with no `Origin` (server-to-server, curl) are allowed.
+- Set `CORS_ORIGINS` to the exact frontend origins in production. Rotating a class code stops new sign-ins with the old code but does not sign out students who are already in a session.
 - Set `SESSION_COOKIE_SECURE=true` in production (it defaults to true when `NODE_ENV=production`).
 - `TEACHER_SIGNUP_OPEN=false` closes public teacher registration once the pilot cohort is enrolled.
 - Auth endpoints are rate-limited per IP and path. The limiter is in-memory, so use Redis before running more than one API instance.
 - A 4-digit PIN has 10,000 combinations. The rate limiter is the main brute-force control for a pilot; add a per-student lockout or longer PIN before a wider rollout.
 - For POPIA, keep student data minimal (display name only), publish a privacy notice, and obtain guardian consent before using real learner data. The AI provider receives workflow content when `AI_PROVIDER=openai`; review that data flow before a real pilot.
+- There is no audit log of teacher data access or deletion yet, and no automated retention job. Add both before a paid rollout.
 
 ---
 
@@ -370,8 +379,13 @@ roster ownership and PIN resets, student session ownership, cross-student
 isolation, starting and resuming a classroom cycle, restarting an active cycle,
 a full six-agent classroom run persisted against the correct `class_id` and
 `student_id`, and the teacher progress endpoints (class stats, per-student
-detail, Teacher Insight, and cross-teacher isolation). Without a database those
-tests skip and the demo suite still runs.
+detail, Teacher Insight, and cross-teacher isolation). The pilot-safety suite
+adds consent enforcement, class-code rotation, learning-history erasure,
+permanent class deletion and the untrusted-origin guard. Without a database
+those tests skip and the demo suite still runs.
+
+`.github/workflows/ci.yml` runs `npm ci`, the full test suite against a
+Postgres 16 service, and `npm run build` on every push and pull request.
 
 ---
 
@@ -389,6 +403,7 @@ tests skip and the demo suite still runs.
 
 - The default demo still uses local JSON persistence, which is single-process and intended for a demo, not concurrent production use. The classroom tenancy layer uses Postgres instead.
 - Classroom learning sessions are persisted and scoped to the student. The teacher progress view is read-only: it shows the diagnosis, mastery result and Teacher Insight, but there is no teacher override for the mastery threshold, regrouping, or assignment of a new topic.
+- Consent is an attestation, not verified guardian consent. There is no audit log of data access or deletion, no automated retention job, and no self-service learner export; those are required before a paid rollout.
 - The demo/learner/teacher routes remain unauthenticated by design. Classroom routes (`/api/auth`, `/api/classes`, `/api/student`) require a session and enforce class ownership, but the original demo switcher is still navigation rather than a security boundary.
 - One topic (`Integers and introductory algebra`) with a small question bank; adding new gaps requires new lesson and mastery sets.
 - Mastery threshold and attempt limit are configuration values; there is no teacher override UI.

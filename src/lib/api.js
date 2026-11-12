@@ -79,12 +79,21 @@ export const api = {
   updateClass: (classId, body) =>
     request(`/classes/${classId}`, { method: "PATCH", body: JSON.stringify(body) }),
   archiveClass: (classId) => request(`/classes/${classId}`, { method: "DELETE" }),
+  rotateJoinCode: (classId) =>
+    request(`/classes/${classId}/join-code`, { method: "POST" }),
+  deleteClassPermanently: (classId) =>
+    request(`/classes/${classId}/permanent`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirm: true }),
+    }),
   addStudent: (classId, body) =>
     request(`/classes/${classId}/students`, { method: "POST", body: JSON.stringify(body) }),
   resetStudentPin: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}/pin`, { method: "POST" }),
   removeStudent: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
+  deleteStudentHistory: (classId, studentId) =>
+    request(`/classes/${classId}/students/${studentId}/history`, { method: "DELETE" }),
   studentClass: () => request("/student/class"),
   studentProgress: () => request("/student/sessions"),
   startStudentSession: (body = {}) =>

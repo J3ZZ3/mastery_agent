@@ -134,6 +134,14 @@ export default function TeacherSignup() {
         <Button type="submit" variant="mint" size="lg" icon={UserPlus} loading={busy} className="w-full">
           Create account
         </Button>
+
+        <p className="text-center text-xs leading-5 text-slate-500">
+          By creating an account you agree to the pilot{" "}
+          <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
+            privacy notice
+          </Link>
+          . You will confirm guardian or school permission before creating a class.
+        </p>
       </form>
     </AuthLayout>
   );

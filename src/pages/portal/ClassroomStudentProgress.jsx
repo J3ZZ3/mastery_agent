@@ -8,8 +8,10 @@ import {
   Lightbulb,
   RefreshCw,
   Target,
+  Trash2,
 } from "lucide-react";
 import { api } from "../../lib/api.js";
+import { useApp } from "../../context/AppContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
 import { GAP_COPY, STATUS_META } from "../../lib/constants.js";
 import { formatDateTime, lastAttempt, percent, relativeTime, signedPoints } from "../../lib/format.js";
@@ -20,6 +22,7 @@ import {
   Button,
   Card,
   EmptyState,
+  Modal,
   ProgressBar,
   Spinner,
 } from "../../components/ui.jsx";
@@ -56,11 +59,14 @@ function statusKeyFor(session) {
 
 export default function ClassroomStudentProgress() {
   const { classId, studentId } = useParams();
+  const { notify } = useApp();
   const { refresh } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(
     async (silent = false) => {
@@ -87,6 +93,23 @@ export default function ClassroomStudentProgress() {
     setData(null);
     load();
   }, [load]);
+
+  const confirmDeleteHistory = async () => {
+    setDeleting(true);
+    try {
+      const result = await api.deleteStudentHistory(classId, studentId);
+      setDeleteOpen(false);
+      notify(
+        `Deleted ${result.deletedSessions} learning session${result.deletedSessions === 1 ? "" : "s"}.`,
+        "success",
+      );
+      await load();
+    } catch (err) {
+      notify(err.message || "Could not delete the learning history.", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -172,9 +195,14 @@ export default function ClassroomStudentProgress() {
           </div>
         </div>
 
-        <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => load(true)} loading={refreshing}>
-          Refresh
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => load(true)} loading={refreshing}>
+            Refresh
+          </Button>
+          <Button variant="danger" size="sm" icon={Trash2} onClick={() => setDeleteOpen(true)}>
+            Delete history
+          </Button>
+        </div>
       </div>
 
       {!session ? (
@@ -415,6 +443,29 @@ export default function ClassroomStudentProgress() {
           cycle resumes where they left off.
         </p>
       ) : null}
+
+      <Modal
+        open={deleteOpen}
+        onClose={() => (deleting ? null : setDeleteOpen(false))}
+        title="Delete learning history"
+        description="This permanently erases every learning session for this student, including diagnoses, mastery results and Teacher Insight."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="danger" icon={Trash2} onClick={confirmDeleteHistory} loading={deleting}>
+              Delete history
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm leading-6 text-slate-600">
+          Erase the learning history for{" "}
+          <span className="font-semibold text-ink-950">{student.displayName}</span>? They stay on the
+          roster and can start a fresh cycle. This cannot be undone.
+        </p>
+      </Modal>
     </div>
   );
 }

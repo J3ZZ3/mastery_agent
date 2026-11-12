@@ -96,7 +96,12 @@ test("a class and roster exist for the progress tests", { skip }, async () => {
   const created = await request("/classes", {
     method: "POST",
     cookie: teacherCookie,
-    body: { name: "Progress Test Class", subject: "Mathematics", grade: 9 },
+    body: {
+      name: "Progress Test Class",
+      subject: "Mathematics",
+      grade: 9,
+      consentAttested: true,
+    },
   });
   assert.equal(created.status, 201);
   classId = created.body.class.id;
@@ -136,7 +141,12 @@ test("a class and roster exist for the progress tests", { skip }, async () => {
   const otherClass = await request("/classes", {
     method: "POST",
     cookie: otherTeacherCookie,
-    body: { name: "Other Class", subject: "Mathematics", grade: 9 },
+    body: {
+      name: "Other Class",
+      subject: "Mathematics",
+      grade: 9,
+      consentAttested: true,
+    },
   });
   assert.equal(otherClass.status, 201);
   otherClassId = otherClass.body.class.id;

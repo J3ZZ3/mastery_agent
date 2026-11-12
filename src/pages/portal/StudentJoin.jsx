@@ -115,6 +115,14 @@ export default function StudentJoin() {
         <Button type="submit" variant="mint" size="lg" icon={LogIn} loading={busy} className="w-full">
           Join class
         </Button>
+
+        <p className="text-center text-xs leading-5 text-slate-500">
+          Your teacher controls your class data. Read the{" "}
+          <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
+            privacy notice
+          </Link>{" "}
+          to see what is stored and how to ask for it to be erased.
+        </p>
       </form>
     </AuthLayout>
   );

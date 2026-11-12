@@ -9,6 +9,7 @@ import TeacherDashboard from "./pages/TeacherDashboard.jsx";
 import TeacherLearnerDetail from "./pages/TeacherLearnerDetail.jsx";
 import NotFound from "./pages/NotFound.jsx";
 import PortalLanding from "./pages/portal/PortalLanding.jsx";
+import PrivacyNotice from "./pages/portal/PrivacyNotice.jsx";
 import TeacherLogin from "./pages/portal/TeacherLogin.jsx";
 import TeacherSignup from "./pages/portal/TeacherSignup.jsx";
 import StudentJoin from "./pages/portal/StudentJoin.jsx";
@@ -22,6 +23,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="portal" element={<PortalLanding />} />
+      <Route path="privacy" element={<PrivacyNotice />} />
       <Route path="portal/teacher/login" element={<TeacherLogin />} />
       <Route path="portal/teacher/signup" element={<TeacherSignup />} />
       <Route path="portal/student" element={<StudentJoin />} />

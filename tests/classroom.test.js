@@ -129,7 +129,12 @@ test("teacher can create and list a class with a join code", { skip }, async () 
   const created = await request("/classes", {
     method: "POST",
     cookie: teacherCookie,
-    body: { name: "Grade 9 Maths A", subject: "Mathematics", grade: 9 },
+    body: {
+      name: "Grade 9 Maths A",
+      subject: "Mathematics",
+      grade: 9,
+      consentAttested: true,
+    },
   });
 
   assert.equal(created.status, 201);

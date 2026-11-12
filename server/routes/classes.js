@@ -7,12 +7,15 @@ import {
   addStudent,
   archiveClass,
   createClass,
+  deleteClassPermanently,
+  deleteStudentHistory,
   getClass,
   getStudentClass,
   listClasses,
   listStudents,
   removeStudent,
   resetStudentPin,
+  rotateJoinCode,
   updateClass,
 } from "../services/classroomService.js";
 import {
@@ -79,6 +82,23 @@ classesRouter.delete(
   }),
 );
 
+classesRouter.post(
+  "/:classId/join-code",
+  asyncRoute(async (req, res) => {
+    const classroom = await rotateJoinCode(teacherId(req), req.params.classId);
+    res.json({ class: classroom });
+  }),
+);
+
+classesRouter.delete(
+  "/:classId/permanent",
+  asyncRoute(async (req, res) => {
+    parseBody(requestSchemas.confirmPermanentDelete, req.body, "class deletion");
+    await deleteClassPermanently(teacherId(req), req.params.classId);
+    res.status(204).end();
+  }),
+);
+
 classesRouter.get(
   "/:classId/students",
   asyncRoute(async (req, res) => {
@@ -132,6 +152,18 @@ classesRouter.delete(
   asyncRoute(async (req, res) => {
     await removeStudent(teacherId(req), req.params.classId, req.params.studentId);
     res.status(204).end();
+  }),
+);
+
+classesRouter.delete(
+  "/:classId/students/:studentId/history",
+  asyncRoute(async (req, res) => {
+    const result = await deleteStudentHistory(
+      teacherId(req),
+      req.params.classId,
+      req.params.studentId,
+    );
+    res.json(result);
   }),
 );
 

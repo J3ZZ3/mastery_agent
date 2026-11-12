@@ -219,8 +219,13 @@ export default function StudentHome() {
       </Card>
 
       <Alert tone="info" title="Privacy">
-        Your account holds your display name and a hashed PIN only. Do not enter personal information into
-        answers or free-text fields.
+        Your account holds your display name and a hashed PIN. Learning answers and results are stored so
+        your teacher can see your progress. Do not enter personal information into answers or free-text
+        fields. Read the{" "}
+        <Link to="/privacy" className="font-semibold text-sky-800 underline hover:text-sky-900">
+          privacy notice
+        </Link>
+        .
       </Alert>
     </div>
   );

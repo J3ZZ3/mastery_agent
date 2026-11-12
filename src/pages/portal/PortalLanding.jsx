@@ -93,8 +93,14 @@ export default function PortalLanding() {
 
         <p className="mt-8 flex items-start gap-2 text-xs leading-5 text-slate-500">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-mint-600" aria-hidden="true" />
-          Student accounts hold a display name and a hashed PIN only. This is a pilot: review the privacy
-          notice and guardian consent requirements before using real learner data.
+          <span>
+            Student accounts hold a display name and a hashed PIN. Learning answers and results are stored
+            so the teacher can see progress. Read the{" "}
+            <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
+              privacy notice
+            </Link>{" "}
+            before enrolling real learners.
+          </span>
         </p>
       </main>
     </div>

@@ -95,7 +95,12 @@ test("a class is created with two students for the learning-cycle tests", { skip
   const created = await request("/classes", {
     method: "POST",
     cookie: teacherCookie,
-    body: { name: "Learning Test Class", subject: "Mathematics", grade: 9 },
+    body: {
+      name: "Learning Test Class",
+      subject: "Mathematics",
+      grade: 9,
+      consentAttested: true,
+    },
   });
   assert.equal(created.status, 201);
   classId = created.body.class.id;

@@ -18,7 +18,7 @@ import {
 import { Field, inputClasses } from "../../components/forms.jsx";
 import CopyButton from "../../components/CopyButton.jsx";
 
-const EMPTY_FORM = { name: "", subject: "Mathematics", grade: "9" };
+const EMPTY_FORM = { name: "", subject: "Mathematics", grade: "9", consent: false };
 
 export default function TeacherClasses() {
   const { user, refresh } = useAuth();
@@ -53,7 +53,10 @@ export default function TeacherClasses() {
     load();
   }, [load]);
 
-  const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+  const update = (key) => (event) => {
+    const value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+    setForm((current) => ({ ...current, [key]: value }));
+  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -64,12 +67,18 @@ export default function TeacherClasses() {
       return;
     }
 
+    if (!form.consent) {
+      setFormError("Confirm that you have permission to create student accounts.");
+      return;
+    }
+
     setCreating(true);
     try {
       await api.createClass({
         name: form.name.trim(),
         subject: form.subject.trim() || "Mathematics",
         grade: form.grade === "" ? null : Number(form.grade),
+        consentAttested: true,
       });
       setCreateOpen(false);
       setForm(EMPTY_FORM);
@@ -263,10 +272,31 @@ export default function TeacherClasses() {
               Pilot data
             </span>
             <p className="mt-1">
-              Student accounts hold a display name and a hashed PIN only. Do not add real learner data until
-              your privacy notice and guardian consent process are in place.
+              Student accounts hold a display name and a hashed PIN. Learning answers, scores and timestamps
+              are stored so you can see progress. Only enrol learners you are authorised to teach.
             </p>
           </div>
+
+          <label
+            htmlFor="classConsent"
+            className="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-700"
+          >
+            <input
+              id="classConsent"
+              type="checkbox"
+              checked={form.consent}
+              onChange={update("consent")}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-mint-600 focus:ring-2 focus:ring-mint-500"
+            />
+            <span>
+              I confirm that I have the school or guardian permission needed to create accounts for the
+              students in this class, and that I have shared the{" "}
+              <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
+                privacy notice
+              </Link>{" "}
+              with them or their guardians.
+            </span>
+          </label>
         </form>
       </Modal>
     </div>

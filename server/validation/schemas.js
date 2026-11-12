@@ -40,6 +40,19 @@ export const requestSchemas = {
     name: className,
     subject: subjectName.optional().default("Mathematics"),
     grade: gradeLevel.optional().default(null),
+    // The teacher must attest that they have the school/guardian permission
+    // needed to create accounts for minors before a class can be created.
+    consentAttested: z.literal(true, {
+      errorMap: () => ({
+        message:
+          "Confirm that you have permission to create student accounts and that you have shared the privacy notice.",
+      }),
+    }),
+  }),
+  confirmPermanentDelete: z.object({
+    confirm: z.literal(true, {
+      errorMap: () => ({ message: "Permanent deletion must be confirmed explicitly." }),
+    }),
   }),
   updateClass: z
     .object({
