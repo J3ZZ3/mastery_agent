@@ -46,6 +46,12 @@ export function createApp() {
   });
   app.use("/api", requireTrustedOrigin);
   app.use("/api", attachAuth);
+  // Teacher resource uploads stream the file as a raw body. JSON requests are
+  // unaffected because this only matches application/octet-stream.
+  app.use(
+    "/api/plan/resources",
+    express.raw({ type: "application/octet-stream", limit: "50mb" }),
+  );
   app.use("/api", apiRouter);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found." });

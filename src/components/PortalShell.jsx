@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { BookOpen, CreditCard, GraduationCap, LogOut, Sparkles, Users } from "lucide-react";
+import { BookOpen, Folder, GraduationCap, LogOut, Sparkles, Users } from "lucide-react";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useApp } from "../context/AppContext.jsx";
 import { Avatar, Badge, Toast } from "./ui.jsx";
@@ -13,7 +13,7 @@ function Wordmark() {
       </span>
       <span className="min-w-0">
         <span className="block text-sm font-black tracking-[0.14em] text-ink-950">MASTERY</span>
-        <span className="block text-[10px] font-medium leading-4 text-slate-500">Classroom pilot</span>
+        <span className="block text-[10px] font-medium leading-4 text-slate-500">Classroom</span>
       </span>
     </Link>
   );
@@ -31,7 +31,7 @@ export default function PortalShell() {
   const nav = isTeacher
     ? [
         { to: "/portal/teacher", label: "Classes", icon: Users, end: true },
-        { to: "/portal/teacher/billing", label: "Plan", icon: CreditCard, end: true },
+        { to: "/portal/teacher/resources", label: "Resources", icon: Folder, end: true },
       ]
     : [
         { to: "/portal/student/home", label: "My class", icon: BookOpen, end: true },
@@ -73,13 +73,7 @@ export default function PortalShell() {
                 {item.label}
               </NavLink>
             ))}
-            <Link
-              to="/"
-              className="ml-1 flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink-950"
-            >
-              <GraduationCap className="h-4 w-4" aria-hidden="true" />
-              Demo workspace
-            </Link>
+
           </nav>
 
           <div className="flex items-center gap-3">
@@ -112,7 +106,7 @@ export default function PortalShell() {
 
       <footer className="mx-auto max-w-6xl px-4 pb-8 text-xs leading-5 text-slate-500 sm:px-6">
         <p>
-          Classroom pilot. Student accounts are managed by the teacher; no student email is required.
+          Student accounts are managed by the teacher; no student email is required.
           Diagnoses remain evidence-supported hypotheses, and the teacher makes the final educational decision.
           {" "}
           <Link to="/privacy" className="font-semibold text-slate-600 underline hover:text-ink-950">

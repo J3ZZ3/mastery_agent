@@ -23,9 +23,10 @@ export const config = {
   nodeEnv,
   port: asNumber(process.env.PORT, 8787),
   clientOrigin,
-  aiProvider: (process.env.AI_PROVIDER || "demo").toLowerCase(),
+  // The platform runs on a live model. There is no deterministic demo engine:
+  // if the selected provider is unreachable the agent call fails loudly.
+  aiProvider: (process.env.AI_PROVIDER || "groq").toLowerCase(),
   masteryThreshold: asNumber(process.env.MASTERY_THRESHOLD, 80),
-  demoDelayMs: asNumber(process.env.DEMO_DELAY_MS, 450),
   maxAttempts: 2,
   corsOrigins: asList(process.env.CORS_ORIGINS, clientOrigin),
 
@@ -42,25 +43,6 @@ export const config = {
   sessionCookieSecure: asBoolean(process.env.SESSION_COOKIE_SECURE, nodeEnv === "production"),
   teacherSignupOpen: asBoolean(process.env.TEACHER_SIGNUP_OPEN, true),
 
-  // Pilot-to-paid conversion. New teachers start on the free pilot with these
-  // limits; paid accounts use the larger limits. Existing classes keep working
-  // after the trial ends, but new classes and students are paused.
-  pilotTrialDays: asNumber(process.env.PILOT_TRIAL_DAYS, 60),
-  pilotMaxClasses: asNumber(process.env.PILOT_MAX_CLASSES, 5),
-  pilotMaxStudentsPerClass: asNumber(process.env.PILOT_MAX_STUDENTS_PER_CLASS, 60),
-  paidMaxClasses: asNumber(process.env.PAID_MAX_CLASSES, 50),
-  paidMaxStudentsPerClass: asNumber(process.env.PAID_MAX_STUDENTS_PER_CLASS, 300),
-  // When set, teacher signup requires this invite code. Leave empty for an
-  // open pilot.
-  pilotInviteCode: process.env.PILOT_INVITE_CODE || "",
-
-  // Billing operations. Upgrade requests are emailed to BILLING_NOTIFY_EMAIL
-  // (or logged when it is empty). BILLING_WEBHOOK_SECRET enables the
-  // provider-agnostic activation endpoint.
-  billingNotifyEmail: process.env.BILLING_NOTIFY_EMAIL || "",
-  billingContactEmail: process.env.BILLING_CONTACT_EMAIL || "",
-  billingWebhookSecret: process.env.BILLING_WEBHOOK_SECRET || "",
-
   // Absolute origin used in emailed links (password reset, verification).
   appOrigin: (process.env.APP_ORIGIN || clientOrigin).replace(/\/$/, ""),
   requireTeacherEmailVerification: asBoolean(
@@ -76,10 +58,26 @@ export const config = {
   passwordResetTtlMinutes: asNumber(process.env.PASSWORD_RESET_TTL_MINUTES, 30),
   emailVerificationTtlHours: asNumber(process.env.EMAIL_VERIFICATION_TTL_HOURS, 48),
 
+  groq: {
+    apiKey: process.env.GROQ_API_KEY || "",
+    baseUrl: (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
+    model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
+    timeoutMs: asNumber(process.env.GROQ_TIMEOUT_MS, 60000),
+    // Free-tier Groq models have a low output-tokens-per-minute cap. qwen
+    // (1000 OTPM) cannot fit the intervention JSON, while gpt-oss models can.
+    maxTokens: asNumber(process.env.GROQ_MAX_TOKENS, 900),
+  },
+
+  // Optional OpenAI-compatible endpoint, kept so the same code can point at
+  // OpenAI, a local llama.cpp server or another compatible gateway.
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
     baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    timeoutMs: asNumber(process.env.OPENAI_TIMEOUT_MS, 18000),
+    timeoutMs: asNumber(process.env.OPENAI_TIMEOUT_MS, 60000),
+    // Reasoning models (e.g. Gemini) spend part of the completion budget on
+    // internal thinking, so a low cap truncates the JSON. Groq keeps its own
+    // smaller cap to stay inside free-tier token limits.
+    maxTokens: asNumber(process.env.OPENAI_MAX_TOKENS, 3000),
   },
 };

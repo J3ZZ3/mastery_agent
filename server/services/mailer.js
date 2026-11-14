@@ -143,34 +143,6 @@ export function passwordResetEmail({ teacher, token }) {
   };
 }
 
-export function upgradeRequestEmail({ teacher, note }) {
-  const lines = [
-    `${teacher.name} <${teacher.email}> asked to upgrade from the free pilot.`,
-    "",
-    note ? `Note from the teacher:\n${note}` : "No note was included.",
-    "",
-    "Activate the paid plan with the billing webhook or:",
-    `node server/scripts/setPlan.js ${teacher.email} paid`,
-    "",
-    "MASTERY classroom pilot",
-  ];
-
-  return {
-    to: config.billingNotifyEmail,
-    subject: `MASTERY upgrade request: ${teacher.name}`,
-    text: lines.join("\n"),
-    html: layout({
-      title: "Upgrade request",
-      body: `${escapeHtml(teacher.name)} (${escapeHtml(teacher.email)}) asked to upgrade from the free pilot. ${
-        note ? `They wrote: “${escapeHtml(note)}”` : "No note was included."
-      }`,
-      action: "Open the teacher dashboard",
-      actionUrl: `${config.appOrigin}/portal/teacher/billing`,
-      note: "Activate the paid plan with the billing webhook or the setPlan script.",
-    }),
-  };
-}
-
 export function emailVerificationEmail({ teacher, token }) {
   const url = `${config.appOrigin}/portal/teacher/verify-email?token=${encodeURIComponent(token)}`;
   const hours = config.emailVerificationTtlHours;

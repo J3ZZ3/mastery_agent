@@ -1,32 +1,22 @@
 import { config } from "../config.js";
-import * as demoStore from "../db/store.js";
-import { diagnosticQuestions } from "../domain/questions.js";
 import { newId, nowIso } from "../lib/id.js";
 import { AppError } from "../lib/errors.js";
 import { getAiProvider } from "../providers/index.js";
-import { runAssessmentAgent } from "../agents/assessmentAgent.js";
+import { runAssessmentAgent, runDiagnosticQuestionsAgent } from "../agents/assessmentAgent.js";
+import { sanitizeQuestionPrompt } from "../domain/answer.js";
 import { runDiagnosticAgent } from "../agents/diagnosticAgent.js";
 import { runLearningDesignerAgent } from "../agents/learningDesignerAgent.js";
 import { runTutorAgent, checkPracticeAnswer } from "../agents/tutorAgent.js";
 import { runMasteryQuestionsAgent, runMasteryEvaluationAgent } from "../agents/masteryAgent.js";
 import { runTeacherInsightAgent } from "../agents/teacherInsightAgent.js";
 import { publishSessionEvent } from "./eventBus.js";
-import { ACTIVE_STATUSES, demoDiagnosticAnswerFor, demoMasteryAnswerFor } from "../services/learnerState.js";
+import { ACTIVE_STATUSES } from "../services/learnerState.js";
+import {
+  getCurriculumContextForLearner,
+  getCurriculumContextForSession,
+} from "../services/curriculumContextService.js";
 
 const ai = getAiProvider();
-const latency = config.demoDelayMs;
-
-/**
- * The orchestrator writes through a small store contract so the JSON demo and
- * Postgres classroom sessions can share the same agent workflow:
- * findLearner, findSession, listSessionsForLearner and replaceSession.
- */
-export const demoSessionStore = {
-  findLearner: demoStore.findLearner,
-  findSession: demoStore.findSession,
-  listSessionsForLearner: demoStore.listSessionsForLearner,
-  replaceSession: demoStore.replaceSession,
-};
 
 async function recordEvent(session, { agent, status, message, summary = "", attempt = session.attempt, durationMs = null, provider = null }, store) {
   const at = nowIso();
@@ -135,7 +125,10 @@ function validateAllAnswered(questions, answers, label) {
   }
 }
 
-export async function createLearningSession({ learnerId, restart = false }, store = demoSessionStore) {
+export async function createLearningSession({ learnerId, restart = false }, store) {
+  if (!store) {
+    throw new AppError(500, "Session store is not configured.");
+  }
   const learner = await store.findLearner(learnerId);
   if (!learner) {
     throw new AppError(404, "Learner not found.");
@@ -154,10 +147,23 @@ export async function createLearningSession({ learnerId, restart = false }, stor
     await store.replaceSession(active);
   }
 
-  const demoMode = Boolean(learner.isDemo);
-  const questions = diagnosticQuestions.map((question) => ({
-    ...question,
-    ...(demoMode ? { demoAnswer: demoDiagnosticAnswerFor(question.id) } : {}),
+  const curriculum = await getCurriculumContextForLearner(learner, {
+    preferTerms: ["algebra", "algebraic", "equation", "equations", "expression", "expressions", "formula", "formulas"],
+  });
+
+  const generated = await runDiagnosticQuestionsAgent({
+    learner,
+    curriculum,
+    ai,
+  });
+  const questions = generated.data.questions.map((question, idx) => ({
+    id: question.id || `d${idx + 1}`,
+    prompt: sanitizeQuestionPrompt(question.prompt),
+    hint: question.hint || "",
+    skill: question.skill || "general",
+    correctAnswer: String(question.correctAnswer ?? "").trim(),
+    explanation: question.explanation || "",
+    misconceptions: {},
   }));
 
   const now = nowIso();
@@ -168,7 +174,7 @@ export async function createLearningSession({ learnerId, restart = false }, stor
     status: "diagnostic",
     attempt: 0,
     threshold: config.masteryThreshold,
-    demoMode,
+    curriculum,
     createdAt: now,
     updatedAt: now,
     lastActivityAt: now,
@@ -218,7 +224,7 @@ export async function submitDiagnostic(sessionId, answers, store = demoSessionSt
           questions: session.diagnostic.questions,
           answers,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         session.diagnostic.report = data;
@@ -237,13 +243,19 @@ export async function submitDiagnostic(sessionId, answers, store = demoSessionSt
         runDiagnosticAgent({
           report: session.diagnostic.report,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         session.diagnosis = data;
       },
       completedMessage: "Diagnostic hypothesis formed.",
       summary: diagnosisSummary,
+    });
+
+    // Refine book context now that we know the suspected gap/topic.
+    session.curriculum = await getCurriculumContextForSession(session, store, {
+      gapKey: session.diagnosis?.gapKey,
+      diagnosis: session.diagnosis,
     });
 
     await trackAgent({
@@ -255,9 +267,10 @@ export async function submitDiagnostic(sessionId, answers, store = demoSessionSt
       run: () =>
         runLearningDesignerAgent({
           diagnosis: session.diagnosis,
+          report: session.diagnostic.report,
           attempt: 1,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         session.attempts = [buildAttempt(1, data)];
@@ -355,7 +368,7 @@ export async function submitPractice(sessionId, answers, store = demoSessionStor
           intervention: attempt.intervention,
           answers: attempt.practice.answers,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         attempt.practice.result = data;
@@ -373,19 +386,16 @@ export async function submitPractice(sessionId, answers, store = demoSessionStor
       startMessage: "Preparing a fresh follow-up assessment.",
       run: () =>
         runMasteryQuestionsAgent({
-          gapKey: session.diagnosis.gapKey,
+          gapKey: session.diagnosis?.gapKey,
           attempt: attempt.attempt,
+          diagnosis: session.diagnosis,
+          report: session.diagnostic?.report,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         attempt.mastery = {
-          questions: data.questions.map((question) => ({
-            ...question,
-            ...(session.demoMode
-              ? { demoAnswer: demoMasteryAnswerFor(session.diagnosis.gapKey, attempt.attempt, question.id) }
-              : {}),
-          })),
+          questions: data.questions.map((question) => ({ ...question })),
           generatedAt: nowIso(),
           submittedAt: null,
           answers: {},
@@ -438,7 +448,7 @@ export async function submitMastery(sessionId, answers, store = demoSessionStore
           attempt: attempt.attempt,
           initialScore: session.diagnostic.report.scorePercent,
           ai,
-          latencyMs: latency,
+          curriculum: session.curriculum,
         }),
       onData: (data) => {
         masteryResult = data;
@@ -465,7 +475,7 @@ export async function submitMastery(sessionId, answers, store = demoSessionStore
             learner: learner || { name: "The learner" },
             session,
             ai,
-            latencyMs: latency,
+            curriculum: session.curriculum,
           }),
         onData: (data) => {
           session.teacherInsight = data;
@@ -487,9 +497,10 @@ export async function submitMastery(sessionId, answers, store = demoSessionStore
         run: () =>
           runLearningDesignerAgent({
             diagnosis: session.diagnosis,
+            report: session.diagnostic.report,
             attempt: nextAttempt,
             ai,
-            latencyMs: latency,
+            curriculum: session.curriculum,
             remainingDifficulty: masteryResult.remainingDifficulty,
           }),
         onData: (data) => {

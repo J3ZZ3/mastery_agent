@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRight,
   BookOpen,
   CheckCircle2,
   ClipboardList,
-  FlaskConical,
   Lightbulb,
   Play,
   RefreshCw,
@@ -14,21 +12,42 @@ import {
   Sparkles,
   Target,
 } from "lucide-react";
-import { AGENTS, GAP_COPY, STATUS_META } from "../lib/constants.js";
+import { AGENTS, STATUS_META } from "../lib/constants.js";
 import { lastAttempt, percent } from "../lib/format.js";
-import AgentTimeline from "./AgentTimeline.jsx";
+
 import DiagnosisCard from "./DiagnosisCard.jsx";
 import LessonPanel from "./LessonPanel.jsx";
 import PracticePanel from "./PracticePanel.jsx";
 import Questionnaire from "./Questionnaire.jsx";
 import ResultSummary from "./ResultSummary.jsx";
-import WorkflowStepper from "./WorkflowStepper.jsx";
-import { Alert, Avatar, Badge, Button, Card, ProgressBar, Spinner } from "./ui.jsx";
+import { Alert, Badge, Button, Card, Spinner } from "./ui.jsx";
 import { cx } from "../lib/cx.js";
 
-const IN_PROGRESS = ["diagnostic", "analyzing", "learning", "retry", "mastery"];
+const CYCLE_AGENTS = ["assessment", "diagnostic", "designer"];
 
-function AnalysisCard({ session, onRefresh, busy }) {
+const AGENT_ACTIVITY_META = {
+  started: { label: "Working now", tone: "sky" },
+  progress: { label: "Working now", tone: "sky" },
+  completed: { label: "Done", tone: "mint" },
+  failed: { label: "Stopped", tone: "rose" },
+};
+
+function agentActivity(events, key) {
+  const latest = [...events].reverse().find((event) => event.agent === key);
+  if (!latest) {
+    return { label: "Waiting", tone: "slate", detail: "Queued until the agent before it finishes." };
+  }
+
+  const meta = AGENT_ACTIVITY_META[latest.status] || { label: "Working now", tone: "sky" };
+  const detail =
+    latest.status === "completed" || latest.status === "failed"
+      ? latest.summary || latest.message
+      : latest.message || latest.summary;
+
+  return { ...meta, detail };
+}
+
+function AnalysisCard({ session, onRefresh, busy, liveEvents = [] }) {
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-slate-100 bg-gradient-to-br from-sky-50 to-white p-6">
@@ -40,26 +59,30 @@ function AnalysisCard({ session, onRefresh, busy }) {
             <p className="eyebrow">Agents at work</p>
             <h2 className="mt-1 text-xl font-bold sm:text-2xl">Your agents are analysing the evidence</h2>
             <p className="mt-1.5 max-w-xl text-sm leading-6 text-slate-600">
-              The Assessment Agent is scoring each item, then the Diagnostic Agent will form a hypothesis and the
-              Learning Designer will build the intervention. Each result is validated before the next agent receives it.
+              Each agent shows exactly what it is doing right now. Its result is checked before the next agent starts.
             </p>
           </div>
         </div>
       </div>
       <div className="p-6">
         <ol className="space-y-3">
-          {AGENTS.slice(0, 3).map((agent, index) => (
-            <li key={agent.key} className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
-                {index + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-semibold text-ink-950">{agent.name}</p>
-                <p className="text-xs text-slate-500">{agent.description}</p>
-              </div>
-              <span className="h-2 w-2 shrink-0 rounded-full bg-sky-500 animate-pulse-ring" aria-hidden="true" />
-            </li>
-          ))}
+          {AGENTS.filter((agent) => CYCLE_AGENTS.includes(agent.key)).map((agent, index) => {
+            const activity = agentActivity(liveEvents, agent.key);
+            return (
+              <li key={agent.key} className="flex items-start gap-3 rounded-xl border border-slate-200 px-4 py-3">
+                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-bold text-slate-600">
+                  {index + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-ink-950">{agent.name}</p>
+                  <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-slate-600">{activity.detail}</p>
+                </div>
+                <Badge tone={activity.tone} className="mt-0.5 shrink-0">
+                  {activity.label}
+                </Badge>
+              </li>
+            );
+          })}
         </ol>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
@@ -133,11 +156,6 @@ function StartCard({ learner, onStart, busy, startMeta }) {
   );
 }
 
-/**
- * Shared six-agent learning experience. The demo workspace and the classroom
- * portal supply their own data loaders and API calls, but render the same
- * workflow, answer state and stage transitions here.
- */
 export default function LearningCycle({
   learner,
   session,
@@ -154,7 +172,6 @@ export default function LearningCycle({
   onSubmitMastery,
   headerExtra = null,
   startMeta = "no sign-in required",
-  activityLink = true,
 }) {
   const [diagnosticAnswers, setDiagnosticAnswers] = useState({});
   const [practiceAnswers, setPracticeAnswers] = useState({});
@@ -167,11 +184,7 @@ export default function LearningCycle({
     setView("lesson");
 
     if (session.status === "diagnostic") {
-      const prefill = { ...(session.diagnostic.answers || {}) };
-      for (const question of session.diagnostic.questions) {
-        if (question.demoAnswer && !prefill[question.id]) prefill[question.id] = question.demoAnswer;
-      }
-      setDiagnosticAnswers(prefill);
+      setDiagnosticAnswers({ ...(session.diagnostic.answers || {}) });
       setMasteryAnswers({});
       setPracticeAnswers({});
       return;
@@ -179,22 +192,14 @@ export default function LearningCycle({
 
     if (session.status === "learning" || session.status === "retry") {
       const attempt = lastAttempt(session);
-      const prefill = { ...(attempt?.practice?.answers || {}) };
-      for (const question of attempt?.intervention?.practiceQuestions || []) {
-        if (question.demoAnswer && !prefill[question.id]) prefill[question.id] = question.demoAnswer;
-      }
-      setPracticeAnswers(prefill);
+      setPracticeAnswers({ ...(attempt?.practice?.answers || {}) });
       setMasteryAnswers({});
       return;
     }
 
     if (session.status === "mastery") {
       const attempt = lastAttempt(session);
-      const prefill = { ...(attempt?.mastery?.answers || {}) };
-      for (const question of attempt?.mastery?.questions || []) {
-        if (question.demoAnswer && !prefill[question.id]) prefill[question.id] = question.demoAnswer;
-      }
-      setMasteryAnswers(prefill);
+      setMasteryAnswers({ ...(attempt?.mastery?.answers || {}) });
     }
   }, [session?.id, session?.status, session?.attempt]);
 
@@ -247,41 +252,29 @@ export default function LearningCycle({
     }
 
     if (busy && session.status === "diagnostic") {
-      return <AnalysisCard session={session} onRefresh={onRefresh} busy={busy} />;
+      return <AnalysisCard session={session} onRefresh={onRefresh} busy={busy} liveEvents={liveEvents} />;
     }
 
     if (session.status === "analyzing") {
-      return <AnalysisCard session={session} onRefresh={onRefresh} busy={loading} />;
+      return <AnalysisCard session={session} onRefresh={onRefresh} busy={loading} liveEvents={liveEvents} />;
     }
 
     if (session.status === "diagnostic") {
       return (
-        <div className="space-y-4">
-          <Alert tone="info" title="Diagnostic · five questions">
-            Answer every question before submitting. The agents evaluate the answers as submitted
-            {session.isDemo ? ", including the pre-filled demo answers, which you can change at any time." : "."}
-          </Alert>
-          <Questionnaire
-            key={`${session.id}-diagnostic`}
-            eyebrow="Diagnostic · Assessment Agent"
-            title="Let's find the pattern"
-            description="No timer and no grade. A wrong answer is useful evidence, and a single slip will be treated as a hypothesis rather than a verdict."
-            icon={ClipboardList}
-            questions={session.diagnostic.questions}
-            answers={diagnosticAnswers}
-            onAnswersChange={setDiagnosticAnswers}
-            onSubmit={onSubmitDiagnostic}
-            submitLabel="Analyse my answers"
-            busy={busy}
-            demoNote={
-              session.isDemo
-                ? "Thabo's sample answers are pre-filled so the demo runs quickly. Change any option to explore a different diagnosis."
-                : undefined
-            }
-            meta={<Badge tone="slate">{session.diagnostic.questions.length} questions</Badge>}
-            footerNote="Submitting runs the Assessment, Diagnostic and Learning Designer agents in sequence."
-          />
-        </div>
+        <Questionnaire
+          key={`${session.id}-diagnostic`}
+          eyebrow="Diagnostic · Assessment Agent"
+          title="Let's find the pattern"
+          description="No timer and no grade. A wrong answer is useful evidence, and a single slip will be treated as a hypothesis rather than a verdict."
+          icon={ClipboardList}
+          questions={session.diagnostic.questions}
+          answers={diagnosticAnswers}
+          onAnswersChange={setDiagnosticAnswers}
+          onSubmit={onSubmitDiagnostic}
+          submitLabel="Analyse my answers"
+          busy={busy}
+          meta={<Badge tone="slate">{session.diagnostic.questions.length} questions</Badge>}
+        />
       );
     }
 
@@ -365,7 +358,6 @@ export default function LearningCycle({
               onCheck={onCheckPractice}
               onFinish={onFinishPractice}
               busy={busy}
-              isDemo={session.isDemo}
             />
           )}
         </div>
@@ -400,11 +392,6 @@ export default function LearningCycle({
             onSubmit={onSubmitMastery}
             submitLabel="Submit mastery check"
             busy={busy}
-            demoNote={
-              session.isDemo
-                ? "Sample answers are pre-filled: the first attempt deliberately includes one sign slip so the adaptation path is visible if you change it."
-                : undefined
-            }
             meta={<Badge tone={session.status === "retry" ? "amber" : "sky"}>{session.threshold}% to pass</Badge>}
             footerNote="The Mastery Agent evaluates the answers, then either writes the teacher insight or adapts the intervention once more."
           />
@@ -427,7 +414,7 @@ export default function LearningCycle({
       return (
         <div className="space-y-4">
           <Alert tone="error" title="This cycle stopped before it finished">
-            {session.error || "An agent step failed. You can restart the cycle without losing the seeded demo data."}
+            {session.error || "An agent step failed. You can restart the cycle."}
           </Alert>
           <Button variant="danger" icon={RotateCcw} onClick={() => onStart(true)} loading={busy}>
             Restart the diagnostic
@@ -462,93 +449,10 @@ export default function LearningCycle({
         <div className="flex flex-wrap items-center gap-2.5">
           {headerExtra}
           <Badge tone={status.tone}>{status.label}</Badge>
-          {learner?.isDemo ? (
-            <Badge tone="amber" icon={FlaskConical}>
-              Demo learner
-            </Badge>
-          ) : null}
         </div>
       </div>
 
-      <WorkflowStepper session={session} />
-
-      {session && IN_PROGRESS.includes(session.status) ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <Avatar name={learner?.name || "?"} accent={learner?.accent || "mint"} size="sm" />
-            <div className="min-w-0">
-              <p className="truncate text-xs font-semibold text-ink-950">
-                {session.status === "diagnostic"
-                  ? "Diagnostic ready"
-                  : session.status === "analyzing"
-                    ? "Agents analysing"
-                    : session.status === "mastery"
-                      ? "Mastery check"
-                      : "Personalised intervention"}
-              </p>
-              <p className="truncate text-[11px] text-slate-500">
-                {session.diagnosis?.suspectedGap
-                  ? GAP_COPY[session.diagnosis.gapKey] || session.diagnosis.suspectedGap
-                  : "Waiting for the diagnostic evidence"}
-              </p>
-            </div>
-          </div>
-          <div className="w-full sm:w-56">
-            <ProgressBar value={learner?.progressPercent ?? 0} showValue label="Progress" />
-          </div>
-        </div>
-      ) : null}
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div className="min-w-0">{renderStage()}</div>
-
-        <aside className="space-y-4 xl:sticky xl:top-24 xl:self-start">
-          <AgentTimeline events={liveEvents} session={session} compact />
-
-          {learner?.isDemo ? (
-            <Card className="p-4">
-              <div className="flex items-center gap-2">
-                <FlaskConical className="h-4 w-4 text-amber-600" aria-hidden="true" />
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-700">Demo controls</p>
-              </div>
-              <p className="mt-2 text-xs leading-5 text-slate-600">
-                Sample answers are pre-filled but fully editable. Every submission is evaluated from the answers you
-                send — nothing is hard-coded to pass.
-              </p>
-              <p className="mt-2 text-[11px] leading-4 text-slate-500">
-                Mastery attempt 1 contains one deliberate sign slip. Editing that answer changes the outcome.
-              </p>
-            </Card>
-          ) : null}
-
-          <Card className="p-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-700">How this works</p>
-            <ul className="mt-2 space-y-2 text-xs leading-5 text-slate-600">
-              <li className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint-600" aria-hidden="true" />
-                Every agent result is validated before it is saved.
-              </li>
-              <li className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint-600" aria-hidden="true" />
-                The timeline updates from real orchestrator events.
-              </li>
-              <li className="flex gap-2">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-mint-600" aria-hidden="true" />
-                Your cycle survives a page refresh.
-              </li>
-            </ul>
-            {activityLink ? (
-              <Link
-                to="/activity"
-                className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-mint-700 hover:text-mint-800"
-              >
-                Open the activity log
-                <ArrowRight className="h-3 w-3" aria-hidden="true" />
-              </Link>
-            ) : null}
-          </Card>
-        </aside>
-      </div>
+      <div className="min-w-0">{renderStage()}</div>
     </div>
   );
 }

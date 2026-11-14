@@ -61,17 +61,23 @@ export function buildTeacherInsight({ learner, session }) {
   );
 }
 
-export async function runTeacherInsightAgent({ learner, session, ai, latencyMs = 0 }) {
-  const fallback = buildTeacherInsight({ learner, session });
+export async function runTeacherInsightAgent({ learner, session, ai, latencyMs = 0, curriculum = null }) {
+  const example = buildTeacherInsight({ learner, session });
 
   const { data, meta } = await ai.generateJSON({
     schema: teacherInsightSchema,
-    fallback,
+    example,
     latencyMs,
     label: "Teacher Insight Agent",
-    instructions:
+    instructions: [
       "Write a concise teacher-facing summary from the recorded cycle. It must cite real scores, celebrate improvement where present, recommend a next step, and avoid labelling the learner. The teacher retains the decision.",
-    payload: { learner, session },
+      curriculum
+        ? "Learner book context is provided (verified outline, scheme and page excerpts). Tie evidence and the recommended next step to specific book topics and PDF page numbers, and suggest where in the scheme/book to continue or reteach. Do not invent page numbers."
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    payload: { learner, session, curriculum },
   });
 
   return { data, meta };

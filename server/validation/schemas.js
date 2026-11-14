@@ -9,7 +9,6 @@ export const GAP_KEYS = [
 ];
 
 const idSchema = z.string().min(1);
-const optionSchema = z.array(z.string().min(1)).min(2);
 
 const personName = z.string().trim().min(1).max(80);
 const className = z.string().trim().min(2).max(80);
@@ -21,7 +20,6 @@ export const requestSchemas = {
     email: z.string().trim().email().max(200),
     name: personName,
     password: z.string().min(8).max(200),
-    inviteCode: z.string().trim().max(120).optional(),
   }),
   teacherLogin: z.object({
     email: z.string().trim().email().max(200),
@@ -39,14 +37,6 @@ export const requestSchemas = {
   }),
   importStudents: z.object({
     csv: z.string().trim().min(1).max(20_000),
-  }),
-  upgradeRequest: z.object({
-    note: z.string().trim().max(1000).optional().default(""),
-  }),
-  billingWebhook: z.object({
-    email: z.string().trim().email().max(200),
-    plan: z.enum(["pilot", "paid"]),
-    trialEndsAt: z.string().datetime({ offset: true }).optional(),
   }),
   studentLogin: z.object({
     joinCode: z
@@ -143,6 +133,24 @@ export const diagnosticSchema = z.object({
   severity: z.enum(["low", "moderate", "high"]),
 });
 
+/**
+ * Model-facing variant of `diagnosticSchema`.
+ *
+ * `gapKey`, `severity` and `confidence` are routing/safety fields that the
+ * orchestrator anchors in code from the objectively graded report. Models
+ * regularly invent their own category labels (e.g. gapKey
+ * "decimal_arithmetic" or severity "medium"), so requiring the strict enum in
+ * the model response makes otherwise good evidence fail validation. The
+ * narrative fields stay strict; the routing fields are relaxed here and
+ * overwritten with the code-derived values after the call.
+ */
+export const diagnosticModelSchema = diagnosticSchema.extend({
+  gapKey: z.string().min(1),
+  severity: z.string().min(1),
+  confidence: z.number(),
+  evidence: z.array(z.string()),
+});
+
 const numberLineSchema = z.object({
   title: z.string().min(1),
   min: z.number(),
@@ -168,7 +176,6 @@ const numberLineSchema = z.object({
 const practiceQuestionSchema = z.object({
   id: z.string().min(1),
   prompt: z.string().min(1),
-  options: optionSchema,
   hint: z.string().min(1),
   skill: z.string().min(1),
   correctAnswer: z.string().min(1),
@@ -201,6 +208,14 @@ export const interventionSchema = z.object({
   adaptationNote: z.string().nullable(),
 });
 
+/**
+ * Model-facing variant: `gapKey` is code-anchored to the diagnosis, so the
+ * model may return any label without failing the whole intervention.
+ */
+export const interventionModelSchema = interventionSchema.extend({
+  gapKey: z.string().min(1),
+});
+
 export const tutorResultSchema = z.object({
   total: z.number().int().nonnegative(),
   correct: z.number().int().nonnegative(),
@@ -224,6 +239,10 @@ export const tutorResultSchema = z.object({
 export const masteryQuestionsSchema = z.object({
   questions: z.array(practiceQuestionSchema).min(1),
   threshold: z.number().min(0).max(100),
+});
+
+export const diagnosticQuestionsSchema = z.object({
+  questions: z.array(practiceQuestionSchema).min(3).max(8),
 });
 
 export const masteryResultSchema = z.object({

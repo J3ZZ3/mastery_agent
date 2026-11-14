@@ -4,8 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-process.env.DEMO_DELAY_MS = "0";
-process.env.AI_PROVIDER = "demo";
+process.env.AI_PROVIDER = "test";
 process.env.EMAIL_DELIVERY = "disabled";
 const testDataDir = await mkdtemp(path.join(tmpdir(), "mastery-class-operations-test-"));
 process.env.MASTERY_DATA_DIR = testDataDir;

@@ -1,108 +1,19 @@
 import { config } from "../config.js";
-import { sleep } from "../lib/async.js";
-
-const extractJson = (content) => {
-  if (typeof content !== "string") {
-    throw new Error("Model response did not contain text");
-  }
-
-  const trimmed = content.trim();
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced ? fenced[1].trim() : trimmed;
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Model response did not contain a JSON object");
-  }
-
-  return JSON.parse(candidate.slice(start, end + 1));
-};
+import { createOpenAiCompatibleProvider } from "./openaiCompatible.js";
 
 /**
- * OpenAI-compatible chat completions provider.
- * Every agent passes a deterministic fallback so a model or network
- * failure degrades gracefully and never breaks the learning cycle.
+ * OpenAI-compatible provider.
+ *
+ * This is the same strict factory Groq uses. It is useful for pointing the
+ * platform at OpenAI, a local llama.cpp/ollama server, or any other
+ * chat-completions compatible gateway via OPENAI_BASE_URL.
  */
-export const openaiProvider = {
+export const openaiProvider = createOpenAiCompatibleProvider({
   id: "openai",
-  label: `OpenAI-compatible (${config.openai.model})`,
-
-  async generateJSON({ schema, fallback, instructions, payload, label, latencyMs = 0 }) {
-    const startedAt = Date.now();
-
-    try {
-      if (latencyMs > 0) {
-        // Keep the demo pacing even when a real provider is configured.
-        await sleep(Math.min(latencyMs, 250));
-      }
-
-      const response = await fetch(`${config.openai.baseUrl}/chat/completions`, {
-        method: "POST",
-        signal: AbortSignal.timeout(config.openai.timeoutMs),
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${config.openai.apiKey}`,
-        },
-        body: JSON.stringify({
-          model: config.openai.model,
-          temperature: 0.2,
-          response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: [
-                `You are the ${label} inside MASTERY, a learning recovery system for Grade 8-9 mathematics.`,
-                "Return one JSON object only. Do not wrap it in markdown.",
-                "Follow the exact structure of the example object. Keep language concise, supportive and evidence-based.",
-                "Never label a learner permanently or claim certainty beyond the evidence.",
-                instructions,
-              ].join("\n"),
-            },
-            {
-              role: "user",
-              content: `Input data:\n${JSON.stringify(payload, null, 2)}\n\nRequired JSON shape example:\n${JSON.stringify(fallback, null, 2)}`,
-            },
-          ],
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Provider returned HTTP ${response.status}`);
-      }
-
-      const body = await response.json();
-      const content = body?.choices?.[0]?.message?.content;
-      const parsed = extractJson(content);
-      const validated = schema.parse(parsed);
-
-      return {
-        data: validated,
-        meta: {
-          provider: "openai",
-          label: this.label,
-          fallbackUsed: false,
-          durationMs: Date.now() - startedAt,
-        },
-      };
-    } catch (error) {
-      const reason = error.name === "TimeoutError" || error.name === "AbortError"
-        ? "Provider request timed out."
-        : /^Provider returned HTTP \d+$/.test(error.message)
-          ? error.message
-          : "Provider response or request failed.";
-      console.warn(`[MASTERY] ${label}: ${reason} Using deterministic fallback.`);
-
-      return {
-        data: schema.parse(fallback),
-        meta: {
-          provider: "openai-fallback",
-          label: `${this.label} · safe fallback`,
-          fallbackUsed: true,
-          error: reason,
-          durationMs: Date.now() - startedAt,
-        },
-      };
-    }
-  },
-};
+  label: `OpenAI-compatible · ${config.openai.model}`,
+  baseUrl: config.openai.baseUrl,
+  apiKey: config.openai.apiKey,
+  model: config.openai.model,
+  timeoutMs: config.openai.timeoutMs,
+  maxTokens: config.openai.maxTokens,
+});

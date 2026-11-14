@@ -4,7 +4,6 @@ import { AppError } from "../lib/errors.js";
 import { asyncRoute } from "../lib/asyncRoute.js";
 import { parseBody } from "../lib/parseBody.js";
 import { createRateLimiter } from "../lib/rateLimit.js";
-import { secureCompare } from "../lib/secureCompare.js";
 import { requestSchemas } from "../validation/schemas.js";
 import { readCookie } from "../auth/cookies.js";
 import { createSessionToken, hashSessionToken } from "../auth/tokens.js";
@@ -42,14 +41,10 @@ authRouter.use((_req, res, next) => {
   next();
 });
 
-/**
- * Public signup configuration. Never expose the invite code or email settings,
- * only whether the code is required so the form can ask for it.
- */
+/** Public signup configuration. Email settings are never exposed. */
 authRouter.get("/config", (_req, res) => {
   res.json({
     teacherSignupOpen: config.teacherSignupOpen,
-    pilotInviteRequired: Boolean(config.pilotInviteCode),
   });
 });
 
@@ -81,13 +76,6 @@ authRouter.post(
     }
 
     const body = parseBody(requestSchemas.teacherSignup, req.body, "signup");
-
-    if (
-      config.pilotInviteCode &&
-      !secureCompare(body.inviteCode || "", config.pilotInviteCode)
-    ) {
-      throw new AppError(403, "A valid pilot invite code is required to create a teacher account.");
-    }
 
     const teacher = await signupTeacher(body);
 

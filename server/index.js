@@ -1,15 +1,12 @@
 import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { providerStatus } from "./providers/index.js";
-import { getDb } from "./db/store.js";
 import { closePool, databaseConfigured } from "./db/postgres.js";
 import { migrate } from "./db/migrate.js";
 
 const app = createApp();
 
 async function start() {
-  await getDb();
-
   if (databaseConfigured()) {
     await migrate();
   }
@@ -21,7 +18,7 @@ async function start() {
     console.log(`  http://localhost:${config.port}/api/health`);
     console.log(`  Provider: ${provider.label}`);
     console.log(`  Mastery threshold: ${config.masteryThreshold}% · Max attempts: ${config.maxAttempts}`);
-    console.log(`  Classroom database: ${databaseConfigured() ? "postgres" : "not configured (demo only)"}`);
+    console.log(`  Classroom database: ${databaseConfigured() ? "postgres" : "not configured"}`);
     console.log("");
   });
 

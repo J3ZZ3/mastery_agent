@@ -16,7 +16,6 @@ import {
   StatCard,
 } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
-import CopyButton from "../../components/CopyButton.jsx";
 import { formatDate } from "../../lib/format.js";
 
 const EMPTY_FORM = { name: "", subject: "Mathematics", grade: "9", consent: false };
@@ -27,7 +26,7 @@ export default function TeacherClasses() {
 
   const [classes, setClasses] = useState([]);
   const [archived, setArchived] = useState([]);
-  const [billing, setBilling] = useState(null);
+  const [plan, setPlan] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -40,14 +39,16 @@ export default function TeacherClasses() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [active, archivedClasses, billingData] = await Promise.all([
+      const [active, archivedClasses, planData] = await Promise.all([
         api.classes(),
         api.archivedClasses(),
-        api.billing(),
+        api.planInfo().catch(() => null),
       ]);
       setClasses(active.classes);
       setArchived(archivedClasses.classes);
-      setBilling(billingData.billing);
+      setPlan(
+        planData || { plan: "resources", studentBook: null, teachersGuide: null },
+      );
       setError(null);
     } catch (err) {
       if (err.status === 401) {
@@ -55,8 +56,6 @@ export default function TeacherClasses() {
         return;
       }
       if (err.status === 403) {
-        // Email verification can be enforced server-side. The dashboard banner
-        // explains how to resend the link, so keep the page usable.
         setClasses([]);
         setArchived([]);
         setError(null);
@@ -146,8 +145,7 @@ export default function TeacherClasses() {
   if (loading) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center gap-3 text-sm text-slate-600">
-        <Spinner />
-        Loading your classes…
+        <Spinner /> Loading your classes…
       </div>
     );
   }
@@ -157,7 +155,7 @@ export default function TeacherClasses() {
       <Alert tone="warning" title="The classroom database is not configured">
         Set <code className="rounded bg-white/60 px-1 py-0.5 font-mono text-xs">DATABASE_URL</code> on the
         server, run <code className="rounded bg-white/60 px-1 py-0.5 font-mono text-xs">npm run db:migrate</code>,
-        then reload. The demo workspace still works without a database.
+        then reload.
       </Alert>
     );
   }
@@ -168,8 +166,7 @@ export default function TeacherClasses() {
         <Alert tone="error" title="Could not load your classes">
           {error.message}
         </Alert>
-        <Button variant="secondary" icon={RefreshCw} onClick={load}>
-          Try again
+        <Button variant="secondary" icon={RefreshCw} onClick={load}> Try again
         </Button>
       </div>
     );
@@ -206,7 +203,7 @@ export default function TeacherClasses() {
             <p>
               We sent a verification link to{" "}
               <span className="font-semibold text-amber-900">{user.teacher.email}</span>. Verifying makes
-              account recovery safer and lets the pilot contact you about your classes.
+              account recovery safer and lets us contact you about your classes.
             </p>
             <Button
               variant="secondary"
@@ -221,44 +218,17 @@ export default function TeacherClasses() {
         </Alert>
       ) : null}
 
-      {billing && !billing.trialActive ? (
-        <Alert tone="warning" title="Your free pilot has ended">
-          <div className="space-y-3">
+      {plan && (plan.studentBook || plan.teachersGuide) ? (
+        <Alert tone="success" title="Documents uploaded">
+          <div className="space-y-1">
             <p>
-              Your classes, rosters and learning history are safe, and students can keep using their
-              current classes. Creating new classes and adding students is paused.
+              <strong>Learner book: </strong>
+              {plan.studentBook?.name || "Not uploaded"}
             </p>
-            <Link
-              to="/portal/teacher/billing"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-amber-900 underline hover:text-amber-950"
-            >
-              View your plan and request an upgrade
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
-          </div>
-        </Alert>
-      ) : billing &&
-        billing.plan === "pilot" &&
-        billing.trialDaysRemaining !== null &&
-        billing.trialDaysRemaining <= 7 ? (
-        <Alert
-          tone="info"
-          title={`${billing.trialDaysRemaining} ${
-            billing.trialDaysRemaining === 1 ? "day" : "days"
-          } left in your pilot`}
-        >
-          <div className="space-y-3">
             <p>
-              Nothing changes automatically. Request an upgrade before the pilot ends to keep adding
-              classes and students without interruption.
+              <strong>Teacher&apos;s guide: </strong>
+              {plan.teachersGuide?.name || "Not uploaded"}
             </p>
-            <Link
-              to="/portal/teacher/billing"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-900 underline hover:text-sky-950"
-            >
-              Review your plan
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </Link>
           </div>
         </Alert>
       ) : null}
@@ -283,8 +253,7 @@ export default function TeacherClasses() {
                   <div className="min-w-0">
                     <h2 className="truncate text-lg font-bold">{classroom.name}</h2>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      {classroom.subject}
-                      {classroom.grade ? ` · Grade ${classroom.grade}` : ""}
+                      {classroom.subject} {classroom.grade ? `· Grade ${classroom.grade}` : ""}
                     </p>
                   </div>
                   <Badge tone="mint" icon={Users}>
@@ -300,7 +269,9 @@ export default function TeacherClasses() {
                     <p className="font-mono text-xl font-bold tracking-[0.22em] text-ink-950">
                       {classroom.joinCode}
                     </p>
-                    <CopyButton value={classroom.joinCode} label="Copy code" />
+                    <button className="btn-copy text-sm text-indigo-600 hover:text-indigo-800">
+                      Copy code
+                    </button>
                   </div>
                 </div>
 
@@ -335,8 +306,7 @@ export default function TeacherClasses() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-ink-950">{classroom.name}</p>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      {classroom.subject}
-                      {classroom.grade ? ` · Grade ${classroom.grade}` : ""} · {classroom.studentCount}{" "}
+                      {classroom.subject} {classroom.grade ? `· Grade ${classroom.grade}` : ""} · {classroom.studentCount}{" "}{"students"}
                       {classroom.studentCount === 1 ? "student" : "students"}
                     </p>
                     <p className="text-[11px] text-slate-400">
@@ -427,7 +397,7 @@ export default function TeacherClasses() {
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
             <span className="inline-flex items-center gap-1.5 font-semibold">
               <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-              Pilot data
+              Student data
             </span>
             <p className="mt-1">
               Student accounts hold a display name and a hashed PIN. Learning answers, scores and timestamps
@@ -451,8 +421,7 @@ export default function TeacherClasses() {
               students in this class, and that I have shared the{" "}
               <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
                 privacy notice
-              </Link>{" "}
-              with them or their guardians.
+              </Link>{" "} with them or their guardians.
             </span>
           </label>
         </form>

@@ -3,13 +3,59 @@ import {
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
-  FlaskConical,
+  Delete,
   Lightbulb,
   MessageSquare,
+  Plus,
   XCircle,
 } from "lucide-react";
 import { Badge, Button, Card, ProgressBar } from "./ui.jsx";
 import { cx } from "../lib/cx.js";
+
+function toLines(value) {
+  if (Array.isArray(value)) return value.length ? value : [""];
+  const str = String(value ?? "");
+  if (!str) return [""];
+  const parts = str.replace(/\r\n/g, "\n").split("\n");
+  return parts.length ? parts : [""];
+}
+
+function fromLines(lines) {
+  return lines.join("\n");
+}
+
+const NUM_PAD = [
+  ["7", "8", "9", "+"],
+  ["4", "5", "6", "-"],
+  ["1", "2", "3", "×"],
+  ["0", ".", "=", "÷"],
+  ["(", ")", "x", "⌫"],
+];
+
+const ALPHA_PAD = [
+  ["a", "b", "c", "x"],
+  ["y", "z", "√", "²"],
+  ["^", "/", "π", "("],
+  [")", "=", "+", "-"],
+  ["×", "÷", " ", "⌫"],
+];
+
+const SUPER = { "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹","+":"⁺","-":"⁻","(":"⁽",")":"⁾","n":"ⁿ","i":"ⁱ" };
+const SUPER_CHARS = new Set(Object.values(SUPER));
+
+function applyMathInsert(current, key) {
+  if (key === "⌫") return current.slice(0, -1);
+  if (key === "^") {
+    if (current.endsWith("^")) return current.slice(0, -1);
+    return current + "^";
+  }
+  if (SUPER[key]) {
+    if (current.endsWith("^")) return current.slice(0, -1) + SUPER[key];
+    const last = current.slice(-1);
+    if (SUPER_CHARS.has(last)) return current + SUPER[key];
+  }
+  return current + key;
+}
 
 export default function PracticePanel({
   intervention,
@@ -19,29 +65,36 @@ export default function PracticePanel({
   onCheck,
   onFinish,
   busy = false,
-  isDemo = false,
 }) {
   const questions = intervention.practiceQuestions;
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState(savedAnswers || {});
   const [checks, setChecks] = useState({});
   const [checking, setChecking] = useState(false);
+  const [activeLine, setActiveLine] = useState(0);
+  const [padMode, setPadMode] = useState("num");
 
   useEffect(() => {
     setAnswers(savedAnswers || {});
   }, [savedAnswers]);
 
   const question = questions[index];
+  const lines = toLines(question ? answers[question.id] || "" : "");
+
+  useEffect(() => {
+    setActiveLine(0);
+  }, [question?.id]);
+
   if (!question) return null;
 
-  const selected = answers[question.id] || "";
   const currentCheck = checks[question.id];
   const answered = questions.filter((item) => String(answers[item.id] ?? "").trim()).length;
   const correctChecked = questions.filter((item) => checks[item.id]?.correct).length;
   const allAnswered = answered === questions.length;
+  const hasContent = lines.some((l) => String(l).trim());
 
-  const choose = (value) => {
-    setAnswers((current) => ({ ...current, [question.id]: value }));
+  const setLines = (nextLines) => {
+    setAnswers((current) => ({ ...current, [question.id]: fromLines(nextLines) }));
     if (checks[question.id]) {
       setChecks((current) => {
         const next = { ...current };
@@ -51,11 +104,30 @@ export default function PracticePanel({
     }
   };
 
+  const updateLine = (lineIndex, value) => {
+    const next = [...lines];
+    next[lineIndex] = value;
+    setLines(next);
+  };
+
+  const addLine = () => {
+    const next = [...lines, ""];
+    setLines(next);
+    setActiveLine(next.length - 1);
+  };
+
+  const pressKey = (key) => {
+    const lineIndex = Math.min(activeLine, Math.max(0, lines.length - 1));
+    const current = lines[lineIndex] || "";
+    updateLine(lineIndex, applyMathInsert(current, key));
+  };
+
   const check = async () => {
-    if (!selected) return;
+    const value = fromLines(lines);
+    if (!String(value).trim()) return;
     setChecking(true);
     try {
-      const result = await onCheck(question.id, selected);
+      const result = await onCheck(question.id, value);
       setChecks((current) => ({ ...current, [question.id]: result }));
     } finally {
       setChecking(false);
@@ -128,70 +200,114 @@ export default function PracticePanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Question {index + 1} of {questions.length}
             </p>
-            {isDemo ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-400">
-                <FlaskConical className="h-3 w-3" aria-hidden="true" />
-                Demo learner
-              </span>
-            ) : null}
           </div>
           <h3 className="mt-2 text-xl font-bold text-ink-950">{question.prompt}</h3>
 
-          <div className="mt-4 grid gap-2" role="radiogroup" aria-label={`Answers for ${question.prompt}`}>
-            {question.options.map((option, optionIndex) => {
-              const isSelected = selected === option;
-              const showCorrect = currentCheck?.correct && isSelected;
-              const showWrong = currentCheck && !currentCheck.correct && isSelected;
-              return (
-                <label
-                  key={option}
+          <div className="mt-4 flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className="min-w-0 flex-1 space-y-2">
+              {lines.map((line, lineIndex) => (
+                <div key={`${question.id}-line-${lineIndex}`}>
+                  <label htmlFor={`practice-${sessionId}-${attemptNumber}-${question.id}-line-${lineIndex}`} className="sr-only">
+                    {lineIndex === 0 ? `Answer for ${question.prompt}` : `Step ${lineIndex + 1}`}
+                  </label>
+                  <input
+                    id={`practice-${sessionId}-${attemptNumber}-${question.id}-line-${lineIndex}`}
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={line}
+                    onFocus={() => setActiveLine(lineIndex)}
+                    onClick={() => setActiveLine(lineIndex)}
+                    onChange={(e) => updateLine(lineIndex, e.target.value)}
+                    placeholder={lineIndex === 0 ? "Start your working or answer…" : `Step ${lineIndex + 1}…`}
+                    className={cx(
+                      "w-full rounded-xl border bg-white px-4 py-3 text-base font-medium text-ink-950 shadow-sm transition placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-offset-1",
+                      currentCheck?.correct
+                        ? "border-mint-500 ring-mint-500"
+                        : currentCheck
+                          ? "border-amber-400 ring-amber-400"
+                          : activeLine === lineIndex
+                            ? "border-mint-500 focus:border-mint-500 focus:ring-mint-500"
+                            : "border-slate-200 focus:border-mint-500 focus:ring-mint-500",
+                    )}
+                  />
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={addLine}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-mint-400 hover:bg-mint-50 hover:text-mint-700"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add line
+              </button>
+              <p className="text-xs text-slate-500">Add lines to show your working step by step. Put your final answer on the last line.</p>
+              {currentCheck?.correct ? (
+                <p className="inline-flex items-center gap-1 text-xs font-medium text-mint-700">
+                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Correct
+                </p>
+              ) : currentCheck ? (
+                <p className="inline-flex items-center gap-1 text-xs font-medium text-amber-700">
+                  <XCircle className="h-4 w-4" aria-hidden="true" /> Not quite yet
+                </p>
+              ) : null}
+            </div>
+
+            <div className="w-full shrink-0 lg:w-64 lg:mt-[5px]">
+              <div className="mb-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPadMode("num")}
                   className={cx(
-                    "flex cursor-pointer items-center gap-3 rounded-xl border p-3 text-sm transition focus-within:ring-2 focus-within:ring-mint-500 focus-within:ring-offset-1",
-                    showCorrect
-                      ? "border-mint-500 bg-mint-50 ring-1 ring-mint-500"
-                      : showWrong
-                        ? "border-amber-400 bg-amber-50 ring-1 ring-amber-400"
-                        : isSelected
-                          ? "border-mint-400 bg-mint-50/70"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50",
+                    "flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold transition",
+                    padMode === "num"
+                      ? "border-ink-950 bg-ink-950 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
                   )}
                 >
-                  <input
-                    type="radio"
-                    name={`practice-${sessionId}-${attemptNumber}-${question.id}`}
-                    value={option}
-                    checked={isSelected}
-                    onChange={() => choose(option)}
-                    className="sr-only"
-                  />
-                  <span
+                  123
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPadMode("alpha")}
+                  className={cx(
+                    "flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold transition",
+                    padMode === "alpha"
+                      ? "border-ink-950 bg-ink-950 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                  )}
+                >
+                  ABC
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                {(padMode === "num" ? NUM_PAD : ALPHA_PAD).flat().map((key, i) => (
+                  <button
+                    key={`${padMode}-${key}-${i}`}
+                    type="button"
+                    onClick={() => pressKey(key)}
                     className={cx(
-                      "flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[11px] font-bold",
-                      isSelected ? "bg-ink-950 text-white" : "bg-slate-100 text-slate-600",
+                      "inline-flex h-11 items-center justify-center rounded-lg border text-sm font-semibold transition active:scale-[0.98]",
+                      key === "⌫"
+                        ? "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                        : key === " "
+                          ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                          : /[0-9]/.test(key)
+                            ? "border-slate-200 bg-white text-ink-950 hover:border-mint-300 hover:bg-mint-50"
+                            : padMode === "alpha" && /^[a-z]$/.test(key)
+                              ? "border-slate-200 bg-white text-ink-950 hover:border-mint-300 hover:bg-mint-50"
+                              : "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100",
                     )}
-                    aria-hidden="true"
+                    aria-label={key === "⌫" ? "Backspace" : key === " " ? "Space" : `Insert ${key}`}
                   >
-                    {String.fromCharCode(65 + optionIndex)}
-                  </span>
-                  <span className="font-medium">{option}</span>
-                  {showCorrect ? <CheckCircle2 className="ml-auto h-4 w-4 text-mint-600" aria-hidden="true" /> : null}
-                  {showWrong ? <XCircle className="ml-auto h-4 w-4 text-amber-600" aria-hidden="true" /> : null}
-                </label>
-              );
-            })}
+                    {key === "⌫" ? <Delete className="h-4 w-4" aria-hidden="true" /> : key === " " ? "␣" : key}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </fieldset>
-
-        {isDemo && question.demoAnswer ? (
-          <button
-            type="button"
-            onClick={() => choose(question.demoAnswer)}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-1 py-1 text-[11px] font-semibold text-slate-500 transition hover:text-slate-800"
-          >
-            <FlaskConical className="h-3 w-3" aria-hidden="true" />
-            Use sample answer for the demo
-          </button>
-        ) : null}
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button
@@ -200,7 +316,7 @@ export default function PracticePanel({
             icon={Lightbulb}
             onClick={check}
             loading={checking}
-            disabled={!selected || busy || Boolean(currentCheck?.correct)}
+            disabled={!hasContent || busy || Boolean(currentCheck?.correct)}
           >
             {currentCheck ? "Check again" : "Check answer"}
           </Button>
@@ -273,7 +389,7 @@ export default function PracticePanel({
             onClick={() => onFinish(answers)}
             loading={busy}
             disabled={!allAnswered || checking}
-            icon={TargetIcon}
+            icon={ArrowRight}
           >
             {allAnswered ? "Finish practice & start mastery" : `Answer all ${questions.length} questions`}
           </Button>
@@ -281,8 +397,4 @@ export default function PracticePanel({
       </div>
     </Card>
   );
-}
-
-function TargetIcon(props) {
-  return <ArrowRight {...props} />;
 }

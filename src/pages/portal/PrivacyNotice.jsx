@@ -58,10 +58,9 @@ const sections = [
     title: "AI provider",
     body: (
       <>
-        In demo mode no external model is called. If the pilot operator enables an AI provider, workflow
-        content (including the student&apos;s answers and the generated feedback) is sent to that provider so
-        it can produce the lesson and insight. Scores, answer keys and the mastery threshold remain computed
-        by the server.
+        When an AI provider is enabled, workflow content (including the student&apos;s answers and the generated
+        feedback) is sent to that provider so it can produce the lesson and insight. Scores, answer keys and
+        the mastery threshold remain computed by the server.
       </>
     ),
   },

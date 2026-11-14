@@ -1,7 +1,53 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Delete, Plus } from "lucide-react";
 import { Button, Card, ProgressBar } from "./ui.jsx";
 import { cx } from "../lib/cx.js";
+
+function toLines(value) {
+  if (Array.isArray(value)) return value.length ? value : [""];
+  const str = String(value ?? "");
+  if (!str) return [""];
+  const parts = str.replace(/\r\n/g, "\n").split("\n");
+  return parts.length ? parts : [""];
+}
+
+function fromLines(lines) {
+  return lines.join("\n");
+}
+
+const NUM_PAD = [
+  ["7", "8", "9", "+"],
+  ["4", "5", "6", "-"],
+  ["1", "2", "3", "×"],
+  ["0", ".", "=", "÷"],
+  ["(", ")", "x", "⌫"],
+];
+
+const ALPHA_PAD = [
+  ["a", "b", "c", "x"],
+  ["y", "z", "√", "²"],
+  ["^", "/", "π", "("],
+  [")", "=", "+", "-"],
+  ["×", "÷", " ", "⌫"],
+];
+
+const SUPER = { "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹","+":"⁺","-":"⁻","(":"⁽",")":"⁾","n":"ⁿ","i":"ⁱ" };
+const SUPER_CHARS = new Set(Object.values(SUPER));
+
+function applyMathInsert(current, key) {
+  if (key === "⌫") return current.slice(0, -1);
+  if (key === "^") {
+    // toggle off if already in exponent marker context
+    if (current.endsWith("^")) return current.slice(0, -1);
+    return current + "^";
+  }
+  if (SUPER[key]) {
+    if (current.endsWith("^")) return current.slice(0, -1) + SUPER[key];
+    const last = current.slice(-1);
+    if (SUPER_CHARS.has(last)) return current + SUPER[key];
+  }
+  return current + key;
+}
 
 export default function Questionnaire({
   eyebrow = "Assessment",
@@ -15,25 +61,49 @@ export default function Questionnaire({
   submitLabel = "Submit answers",
   busy = false,
   meta,
-  demoNote,
   footerNote,
 }) {
   const [index, setIndex] = useState(0);
+  const [activeLine, setActiveLine] = useState(0);
+  const [padMode, setPadMode] = useState("num");
 
   useEffect(() => {
     setIndex(0);
   }, [questions.length]);
 
   const question = questions[index];
+  const lines = toLines(question ? answers[question.id] || "" : "");
+
+  useEffect(() => {
+    setActiveLine(0);
+  }, [question?.id]);
+
   if (!question) return null;
 
   const answered = questions.filter((item) => String(answers[item.id] ?? "").trim()).length;
   const allAnswered = answered === questions.length;
-  const selected = answers[question.id] || "";
   const last = index === questions.length - 1;
 
-  const choose = (value) => {
-    onAnswersChange({ ...answers, [question.id]: value });
+  const setLines = (nextLines) => {
+    onAnswersChange({ ...answers, [question.id]: fromLines(nextLines) });
+  };
+
+  const updateLine = (lineIndex, value) => {
+    const next = [...lines];
+    next[lineIndex] = value;
+    setLines(next);
+  };
+
+  const addLine = () => {
+    const next = [...lines, ""];
+    setLines(next);
+    setActiveLine(next.length - 1);
+  };
+
+  const pressKey = (key) => {
+    const lineIndex = Math.min(activeLine, Math.max(0, lines.length - 1));
+    const current = lines[lineIndex] || "";
+    updateLine(lineIndex, applyMathInsert(current, key));
   };
 
   return (
@@ -94,56 +164,106 @@ export default function Questionnaire({
           <legend className="sr-only">
             Question {index + 1} of {questions.length}
           </legend>
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Question {index + 1} of {questions.length}
-            </p>
-            <p className="text-xs font-medium text-slate-500">Choose one answer</p>
-          </div>
-          <h3 className="mt-2 text-2xl font-bold tracking-tight text-ink-950 sm:text-3xl">{question.prompt}</h3>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Question {index + 1} of {questions.length}
+                </p>
+                <p className="text-xs font-medium text-slate-500">Type your answer</p>
+              </div>
+              <h3 className="mt-2 text-2xl font-bold tracking-tight text-ink-950 sm:text-3xl">{question.prompt}</h3>
 
-          <div className="mt-6 grid gap-2.5 sm:grid-cols-2" role="radiogroup" aria-label={`Answers for ${question.prompt}`}>
-            {question.options.map((option, optionIndex) => {
-              const isSelected = selected === option;
-              return (
-                <label
-                  key={option}
+              <div className="mt-6 space-y-2">
+                {lines.map((line, lineIndex) => (
+                  <div key={`${question.id}-line-${lineIndex}`}>
+                    <label htmlFor={`question-${question.id}-line-${lineIndex}`} className="sr-only">
+                      {lineIndex === 0 ? `Answer for ${question.prompt}` : `Step ${lineIndex + 1}`}
+                    </label>
+                    <input
+                      id={`question-${question.id}-line-${lineIndex}`}
+                      type="text"
+                      inputMode="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={line}
+                      onFocus={() => setActiveLine(lineIndex)}
+                      onClick={() => setActiveLine(lineIndex)}
+                      onChange={(e) => updateLine(lineIndex, e.target.value)}
+                      placeholder={lineIndex === 0 ? "Start your working or answer…" : `Step ${lineIndex + 1}…`}
+                      className={cx(
+                        "w-full rounded-xl border bg-white px-4 py-3 text-base font-medium text-ink-950 shadow-sm transition placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-mint-500 focus:ring-offset-1",
+                        activeLine === lineIndex ? "border-mint-500" : "border-slate-200 focus:border-mint-500",
+                      )}
+                    />
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={addLine}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-slate-300 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-mint-400 hover:bg-mint-50 hover:text-mint-700"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Add line
+                </button>
+                <p className="text-xs text-slate-500">Add lines to show your working step by step. Your final answer should be on the last line.</p>
+              </div>
+            </div>
+
+            <div className="w-full shrink-0 lg:w-64 lg:mt-[5px]">
+              <div className="mb-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPadMode("num")}
                   className={cx(
-                    "flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 text-sm transition focus-within:ring-2 focus-within:ring-mint-500 focus-within:ring-offset-1",
-                    isSelected
-                      ? "border-mint-500 bg-mint-50 text-ink-950 ring-1 ring-mint-500"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50",
+                    "flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold transition",
+                    padMode === "num"
+                      ? "border-ink-950 bg-ink-950 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
                   )}
                 >
-                  <input
-                    type="radio"
-                    name={`question-${question.id}`}
-                    value={option}
-                    checked={isSelected}
-                    onChange={() => choose(option)}
-                    className="sr-only"
-                  />
-                  <span
+                  123
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPadMode("alpha")}
+                  className={cx(
+                    "flex-1 rounded-lg border px-2 py-1.5 text-xs font-semibold transition",
+                    padMode === "alpha"
+                      ? "border-ink-950 bg-ink-950 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                  )}
+                >
+                  ABC
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2">
+                {(padMode === "num" ? NUM_PAD : ALPHA_PAD).flat().map((key, i) => (
+                  <button
+                    key={`${padMode}-${key}-${i}`}
+                    type="button"
+                    onClick={() => pressKey(key)}
                     className={cx(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold",
-                      isSelected ? "bg-mint-600 text-white" : "bg-slate-100 text-slate-600",
+                      "inline-flex h-11 items-center justify-center rounded-lg border text-sm font-semibold transition active:scale-[0.98]",
+                      key === "⌫"
+                        ? "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                        : key === " "
+                          ? "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                          : /[0-9]/.test(key)
+                            ? "border-slate-200 bg-white text-ink-950 hover:border-mint-300 hover:bg-mint-50"
+                            : padMode === "alpha" && /^[a-z]$/.test(key)
+                              ? "border-slate-200 bg-white text-ink-950 hover:border-mint-300 hover:bg-mint-50"
+                              : "border-sky-200 bg-sky-50 text-sky-800 hover:bg-sky-100",
                     )}
-                    aria-hidden="true"
+                    aria-label={key === "⌫" ? "Backspace" : key === " " ? "Space" : `Insert ${key}`}
                   >
-                    {String.fromCharCode(65 + optionIndex)}
-                  </span>
-                  <span className="font-medium">{option}</span>
-                </label>
-              );
-            })}
+                    {key === "⌫" ? <Delete className="h-4 w-4" aria-hidden="true" /> : key === " " ? "␣" : key}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </fieldset>
-
-        {demoNote ? (
-          <p className="mt-5 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900">
-            {demoNote}
-          </p>
-        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">

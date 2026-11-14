@@ -13,7 +13,7 @@ export default function AuthLayout({ eyebrow, title, description, children, foot
             </span>
             <span>
               <span className="block text-sm font-black tracking-[0.16em]">MASTERY</span>
-              <span className="block text-[10px] font-medium text-slate-400">Classroom pilot</span>
+              <span className="block text-[10px] font-medium text-slate-400">Classroom</span>
             </span>
           </Link>
 

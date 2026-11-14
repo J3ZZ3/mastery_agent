@@ -30,35 +30,6 @@ async function request(path, options = {}) {
 
 export const api = {
   health: () => request("/health"),
-  learners: () => request("/learners"),
-  learnerProgress: (learnerId) => request(`/learners/${learnerId}/progress`),
-  createSession: (body) =>
-    request("/learning-sessions", { method: "POST", body: JSON.stringify(body) }),
-  session: (sessionId) => request(`/learning-sessions/${sessionId}`),
-  submitDiagnostic: (sessionId, answers) =>
-    request(`/learning-sessions/${sessionId}/diagnostic`, {
-      method: "POST",
-      body: JSON.stringify({ answers }),
-    }),
-  checkPractice: (sessionId, questionId, answer) =>
-    request(`/learning-sessions/${sessionId}/practice/check`, {
-      method: "POST",
-      body: JSON.stringify({ questionId, answer }),
-    }),
-  submitPractice: (sessionId, answers) =>
-    request(`/learning-sessions/${sessionId}/practice`, {
-      method: "POST",
-      body: JSON.stringify({ answers }),
-    }),
-  submitMastery: (sessionId, answers) =>
-    request(`/learning-sessions/${sessionId}/mastery`, {
-      method: "POST",
-      body: JSON.stringify({ answers }),
-    }),
-  teacherOverview: () => request("/teacher/overview"),
-  teacherLearner: (learnerId) => request(`/teacher/learners/${learnerId}`),
-  activity: (limit = 80) => request(`/activity?limit=${limit}`),
-  resetDemo: () => request("/demo/reset", { method: "POST" }),
 
   // Classroom pilot
   me: () => request("/auth/me"),
@@ -111,9 +82,39 @@ export const api = {
     request(`/classes/${classId}/students/${studentId}`, { method: "DELETE" }),
   deleteStudentHistory: (classId, studentId) =>
     request(`/classes/${classId}/students/${studentId}/history`, { method: "DELETE" }),
-  billing: () => request("/billing"),
-  requestUpgrade: (body = {}) =>
-    request("/billing/upgrade-request", { method: "POST", body: JSON.stringify(body) }),
+  planInfo: () => request("/plan/info"),
+  uploadResource: async (slot, file) => {
+    const response = await fetch(`/api/plan/resources/${slot}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Filename": file.name,
+      },
+      body: file,
+    });
+    const data = await parseResponse(response);
+    if (!response.ok) {
+      const error = new Error(
+        data?.error || `Upload failed with status ${response.status}.`,
+      );
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  },
+  resourceOutline: (slot) => request(`/plan/resources/${slot}/outline`),
+  resourcePages: (slot, from = 1, to = null) =>
+    request(
+      `/plan/resources/${slot}/pages?from=${from}${to ? `&to=${to}` : ""}`,
+    ),
+  analyzeResource: (slot, goal = null) =>
+    request(`/plan/resources/${slot}/analyze`, {
+      method: "POST",
+      body: JSON.stringify({ goal }),
+    }),
+  agentRun: (runId) => request(`/plan/agent-runs/${runId}`),
+  agentRuns: (limit = 10) => request(`/plan/agent-runs?limit=${limit}`),
   studentClass: () => request("/student/class"),
   studentProgress: () => request("/student/sessions"),
   startStudentSession: (body = {}) =>

@@ -1,199 +1,294 @@
-import { config } from "../config.js";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { query } from "../db/postgres.js";
 import { AppError } from "../lib/errors.js";
-import { sendMail, upgradeRequestEmail } from "./mailer.js";
+import { extractDocument } from "./documentExtraction.js";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const here = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(here, "..", "..");
+const UPLOAD_ROOT = path.resolve(here, "..", "uploads");
 
-export const PLAN_LIMITS = {
-  pilot: {
-    maxClasses: config.pilotMaxClasses,
-    maxStudentsPerClass: config.pilotMaxStudentsPerClass,
+/**
+ * The two documents a teacher can upload. Each slot maps to fixed column names
+ * so no user input ever reaches the SQL text.
+ */
+const RESOURCE_SLOTS = {
+  "student-book": {
+    label: "student book",
+    pathColumn: "student_book_path",
+    nameColumn: "student_book_name",
+    uploadedColumn: "student_book_uploaded_at",
+    kindColumn: "student_book_kind",
+    pageCountColumn: "student_book_page_count",
+    outlineColumn: "student_book_outline",
+    extractColumn: "student_book_extract_path",
+    needsOcrColumn: "student_book_needs_ocr",
   },
-  paid: {
-    maxClasses: config.paidMaxClasses,
-    maxStudentsPerClass: config.paidMaxStudentsPerClass,
+  "teachers-guide": {
+    label: "teacher's guide",
+    pathColumn: "teachers_guide_path",
+    nameColumn: "teachers_guide_name",
+    uploadedColumn: "teachers_guide_uploaded_at",
+    kindColumn: "teachers_guide_kind",
+    pageCountColumn: "teachers_guide_page_count",
+    outlineColumn: "teachers_guide_outline",
+    extractColumn: "teachers_guide_extract_path",
+    needsOcrColumn: "teachers_guide_needs_ocr",
   },
 };
 
-const normalizePlan = (plan) => (plan === "paid" ? "paid" : "pilot");
-const planLabel = (plan) => (plan === "paid" ? "paid plan" : "free pilot");
+const resourceDto = (row, slot) => {
+  const storedPath = row[slot.pathColumn];
+  if (!storedPath) return null;
+  return {
+    path: storedPath,
+    name: row[slot.nameColumn] || path.basename(storedPath),
+    uploadedAt: row[slot.uploadedColumn] || null,
+    kind: row[slot.kindColumn] || null,
+    pageCount: row[slot.pageCountColumn] ?? null,
+    outline: Array.isArray(row[slot.outlineColumn]) ? row[slot.outlineColumn] : [],
+    needsOcr: Boolean(row[slot.needsOcrColumn]),
+    hasExtract: Boolean(row[slot.extractColumn]),
+  };
+};
 
-export function limitsForPlan(plan) {
-  return PLAN_LIMITS[normalizePlan(plan)];
-}
-
-/** New teachers start on the free pilot with a trial end date. */
-export function newTeacherTrialEnd() {
-  return new Date(Date.now() + config.pilotTrialDays * DAY_MS).toISOString();
-}
+const RESOURCE_SELECT = `
+  select
+    id,
+    student_book_path,
+    student_book_name,
+    student_book_uploaded_at,
+    student_book_kind,
+    student_book_page_count,
+    student_book_outline,
+    student_book_extract_path,
+    student_book_needs_ocr,
+    teachers_guide_path,
+    teachers_guide_name,
+    teachers_guide_uploaded_at,
+    teachers_guide_kind,
+    teachers_guide_page_count,
+    teachers_guide_outline,
+    teachers_guide_extract_path,
+    teachers_guide_needs_ocr
+  from teachers
+  where id = $1
+`;
 
 /**
- * Plan, trial state and current usage for one teacher. Archived classes do not
- * count toward the active-class limit, and their students do not count toward
- * active usage.
+ * The two uploaded documents for one teacher, or null for each slot that has
+ * not been uploaded yet.
  */
-export async function getTeacherPlan(teacherId) {
-  const { rows } = await query(
-    `select
-       t.id,
-       t.plan,
-       t.trial_ends_at,
-       t.upgrade_requested_at,
-       (select count(*)::int from classes c
-         where c.teacher_id = t.id and c.archived_at is null) as class_count,
-       (select count(*)::int from students s
-         join classes c on c.id = s.class_id
-         where c.teacher_id = t.id and c.archived_at is null) as student_count
-     from teachers t
-     where t.id = $1`,
-    [teacherId],
-  );
-
+export async function getTeacherResources(teacherId) {
+  const { rows } = await query(RESOURCE_SELECT, [teacherId]);
   const row = rows[0];
   if (!row) throw new AppError(404, "Teacher account not found.");
 
-  const plan = normalizePlan(row.plan);
-  const limits = limitsForPlan(plan);
-  const trialEnd = row.trial_ends_at ? new Date(row.trial_ends_at) : null;
-  const trialActive = plan === "paid" || !trialEnd || trialEnd.getTime() > Date.now();
-  const daysRemaining =
-    plan === "paid" || !trialEnd
-      ? null
-      : Math.max(0, Math.ceil((trialEnd.getTime() - Date.now()) / DAY_MS));
-  const classes = Number(row.class_count);
-  const students = Number(row.student_count);
-
   return {
-    plan,
-    trialEndsAt: row.trial_ends_at,
-    trialActive,
-    trialDaysRemaining: trialActive ? daysRemaining : 0,
-    upgradeRequestedAt: row.upgrade_requested_at,
-    limits,
-    limitsByPlan: PLAN_LIMITS,
-    usage: { classes, students },
-    canCreateClass: trialActive && classes < limits.maxClasses,
-    contactEmail: config.billingContactEmail || null,
+    studentBook: resourceDto(row, RESOURCE_SLOTS["student-book"]),
+    teachersGuide: resourceDto(row, RESOURCE_SLOTS["teachers-guide"]),
   };
 }
 
-export function assertTrialActive(planInfo) {
-  if (!planInfo.trialActive) {
-    throw new AppError(
-      402,
-      "Your free pilot has ended. Existing classes still work, but upgrade to create classes or add students.",
-    );
-  }
-}
-
-export async function assertCanCreateClass(teacherId) {
-  const planInfo = await getTeacherPlan(teacherId);
-  assertTrialActive(planInfo);
-
-  if (planInfo.usage.classes >= planInfo.limits.maxClasses) {
-    throw new AppError(
-      402,
-      `The ${planLabel(planInfo.plan)} includes up to ${planInfo.limits.maxClasses} active classes. Archive a class or upgrade for more.`,
-    );
-  }
-
-  return planInfo;
-}
-
 /**
- * Restoring an archived class does not create new capacity, so it is allowed
- * after the trial ends as long as the active-class limit is not exceeded.
+ * Resource status plus current usage for one teacher. There are no plan limits
+ * or trial state: the teacher always has full access to their own classes.
  */
-export async function assertCanRestoreClass(teacherId) {
-  const planInfo = await getTeacherPlan(teacherId);
-  if (planInfo.usage.classes >= planInfo.limits.maxClasses) {
-    throw new AppError(
-      402,
-      `The ${planLabel(planInfo.plan)} includes up to ${planInfo.limits.maxClasses} active classes. Archive a class or upgrade for more.`,
-    );
-  }
-  return planInfo;
-}
+export async function getTeacherPlan(teacherId) {
+  const resources = await getTeacherResources(teacherId);
 
-export async function assertCanAddStudents(teacherId, currentCount, additional = 1) {
-  const planInfo = await getTeacherPlan(teacherId);
-  assertTrialActive(planInfo);
-
-  if (currentCount + additional > planInfo.limits.maxStudentsPerClass) {
-    throw new AppError(
-      402,
-      `This class is limited to ${planInfo.limits.maxStudentsPerClass} students on the ${planLabel(planInfo.plan)}. Upgrade to add more.`,
-    );
-  }
-
-  return planInfo;
-}
-
-/**
- * Record an upgrade request and notify the pilot operator. Requests are
- * idempotent: the first timestamp is kept, but the operator still gets a new
- * message if the teacher asks again with more context.
- */
-export async function requestUpgrade(teacherId, note = "") {
   const { rows } = await query(
-    `update teachers
-     set upgrade_requested_at = coalesce(upgrade_requested_at, now())
-     where id = $1
-     returning id, email, name, upgrade_requested_at`,
+    `select
+       (select count(*)::int from classes c
+         where c.teacher_id = $1 and c.archived_at is null) as class_count,
+       (select count(*)::int from students s
+         join classes c on c.id = s.class_id
+         where c.teacher_id = $1 and c.archived_at is null) as student_count`,
     [teacherId],
   );
 
-  const teacher = rows[0];
-  if (!teacher) throw new AppError(404, "Teacher account not found.");
+  const usage = {
+    classes: Number(rows[0]?.class_count || 0),
+    students: Number(rows[0]?.student_count || 0),
+  };
 
-  if (config.billingNotifyEmail) {
-    await sendMail(upgradeRequestEmail({ teacher, note })).catch((error) => {
-      console.error("[MASTERY] Could not send the upgrade request email:", error.message);
-    });
-  } else {
-    console.log(
-      `[MASTERY billing] Upgrade requested by ${teacher.email} (${teacher.name})${
-        note ? `: ${note}` : ""
-      }`,
-    );
-  }
-
-  return getTeacherPlan(teacherId);
+  return {
+    plan: "resources",
+    studentBook: resources.studentBook,
+    teachersGuide: resources.teachersGuide,
+    // Legacy flat fields kept so older screens keep working.
+    studentBookPath: resources.studentBook?.path || null,
+    teachersGuidePath: resources.teachersGuide?.path || null,
+    usage,
+  };
 }
 
+const safeFilename = (value) => {
+  const base = String(value || "resource")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop();
+  const cleaned = base.replace(/[^\w.\-]+/g, "_").slice(-120);
+  return cleaned || "resource";
+};
+
+const relativeToRoot = (absolutePath) =>
+  path.relative(PROJECT_ROOT, absolutePath).split(path.sep).join("/");
+
 /**
- * Provider-agnostic plan activation for the billing webhook. `paid` clears the
- * trial; `pilot` with no trial date expires the pilot immediately.
+ * Persist an uploaded document to disk, extract its text page by page, and
+ * record the detected topic outline on the teacher row. A JSON sidecar keeps
+ * the full page text so it can be read later without re-parsing the PDF.
  */
-export async function setTeacherPlanByEmail({ email, plan, trialEndsAt }) {
-  const normalizedPlan = normalizePlan(plan);
-  const nextTrial =
-    normalizedPlan === "paid"
-      ? null
-      : trialEndsAt
-        ? new Date(trialEndsAt).toISOString()
-        : new Date().toISOString();
+export async function saveTeacherResource(teacherId, slotKey, { filename, buffer }) {
+  const slot = RESOURCE_SLOTS[slotKey];
+  if (!slot) throw new AppError(400, "Unknown resource slot.");
+  if (!buffer || buffer.length === 0) {
+    throw new AppError(400, "The uploaded file is empty.");
+  }
+
+  const safe = safeFilename(filename);
+  const teacherDir = path.join(UPLOAD_ROOT, teacherId);
+  await fs.mkdir(teacherDir, { recursive: true });
+
+  const storedName = `${Date.now()}-${safe}`;
+  const absolutePath = path.join(teacherDir, storedName);
+  await fs.writeFile(absolutePath, buffer);
+
+  const relativePath = relativeToRoot(absolutePath);
+
+  let extraction = null;
+  try {
+    extraction = await extractDocument(buffer, safe);
+  } catch (error) {
+    console.error("[MASTERY] Could not extract the uploaded document:", error.message);
+  }
+
+  let extractPath = null;
+  if (extraction) {
+    const sidecarPath = `${absolutePath}.extract.json`;
+    await fs.writeFile(sidecarPath, JSON.stringify(extraction));
+    extractPath = relativeToRoot(sidecarPath);
+  }
 
   const { rows } = await query(
     `update teachers
-     set plan = $2,
-         trial_ends_at = $3,
-         upgrade_requested_at = case when $2 = 'paid' then null else upgrade_requested_at end
-     where lower(email) = lower($1)
-     returning id, email, name, plan, trial_ends_at, upgrade_requested_at`,
-    [email, normalizedPlan, nextTrial],
+        set ${slot.pathColumn} = $2,
+            ${slot.nameColumn} = $3,
+            ${slot.uploadedColumn} = now(),
+            ${slot.kindColumn} = $4,
+            ${slot.pageCountColumn} = $5,
+            ${slot.outlineColumn} = $6,
+            ${slot.extractColumn} = $7,
+            ${slot.needsOcrColumn} = $8
+      where id = $1
+      returning id`,
+    [
+      teacherId,
+      relativePath,
+      safe,
+      extraction?.kind || null,
+      extraction?.pageCount ?? null,
+      extraction ? JSON.stringify(extraction.outline || []) : null,
+      extractPath,
+      extraction?.needsOcr ?? false,
+    ],
   );
+  if (!rows[0]) throw new AppError(404, "Teacher account not found.");
 
-  const teacher = rows[0];
-  if (!teacher) throw new AppError(404, "Teacher account not found.");
+  return getTeacherResources(teacherId);
+}
 
+const readExtract = async (teacherId, slotKey) => {
+  const slot = RESOURCE_SLOTS[slotKey];
+  if (!slot) throw new AppError(400, "Unknown resource slot.");
+
+  const { rows } = await query(
+    `select ${slot.extractColumn} as extract_path, ${slot.nameColumn} as name
+       from teachers where id = $1`,
+    [teacherId],
+  );
+  const row = rows[0];
+  if (!row) throw new AppError(404, "Teacher account not found.");
+  if (!row.extract_path) {
+    throw new AppError(404, "This document has not been extracted yet.");
+  }
+
+  const absolutePath = path.resolve(PROJECT_ROOT, row.extract_path);
+  const text = await fs.readFile(absolutePath, "utf8");
+  return { name: row.name, extract: JSON.parse(text) };
+};
+
+/** The detected topic/subtopic outline with PDF page numbers. */
+export async function getResourceOutline(teacherId, slotKey) {
+  const { name, extract } = await readExtract(teacherId, slotKey);
   return {
-    id: teacher.id,
-    email: teacher.email,
-    name: teacher.name,
-    plan: teacher.plan,
-    trialEndsAt: teacher.trial_ends_at,
-    upgradeRequestedAt: teacher.upgrade_requested_at,
+    name,
+    kind: extract.kind,
+    pageCount: extract.pageCount,
+    pageAccurate: extract.pageAccurate,
+    needsOcr: extract.needsOcr,
+    outline: extract.outline || [],
+    tocEntries: extract.tocEntries || [],
   };
 }
+
+/**
+ * The full parsed document (page text included) for the agent pipeline.
+ * Kept separate from the HTTP endpoints so agents can read page ranges
+ * without re-parsing the PDF.
+ */
+export async function getResourceDocument(teacherId, slotKey) {
+  const { name, extract } = await readExtract(teacherId, slotKey);
+  return {
+    name,
+    kind: extract.kind,
+    pageCount: extract.pageCount,
+    pageAccurate: extract.pageAccurate,
+    needsOcr: Boolean(extract.needsOcr),
+    pages: extract.pages || [],
+    outline: extract.outline || [],
+    tocEntries: extract.tocEntries || [],
+  };
+}
+
+/**
+ * Persist an agent-verified outline so the Resources page and the syllabus
+ * discussion use the corrected topic-to-page map from then on.
+ */
+export async function saveResourceOutline(teacherId, slotKey, outline) {
+  const slot = RESOURCE_SLOTS[slotKey];
+  if (!slot) throw new AppError(400, "Unknown resource slot.");
+
+  const { rows } = await query(
+    `update teachers
+        set ${slot.outlineColumn} = $2
+      where id = $1
+      returning id`,
+    [teacherId, JSON.stringify(outline || [])],
+  );
+  if (!rows[0]) throw new AppError(404, "Teacher account not found.");
+}
+
+/** Page text for a range of pages, used as grounded context for the AI. */
+export async function getResourcePages(teacherId, slotKey, { from = 1, to = null } = {}) {
+  const { name, extract } = await readExtract(teacherId, slotKey);
+  const start = Math.max(1, Number(from) || 1);
+  const end = Math.min(
+    Number(to) || extract.pages.length,
+    extract.pages.length,
+  );
+
+  return {
+    name,
+    pageCount: extract.pageCount,
+    from: start,
+    to: end,
+    pages: extract.pages
+      .filter((page) => page.page >= start && page.page <= end)
+      .map((page) => ({ page: page.page, text: page.text })),
+  };
+}
+
+/* AI syllabus discussion removed by request. */

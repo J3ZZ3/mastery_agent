@@ -13,12 +13,10 @@ export default function PortalLanding() {
             </span>
             <span>
               <span className="block text-sm font-black tracking-[0.14em] text-ink-950">MASTERY</span>
-              <span className="block text-[10px] font-medium text-slate-500">Classroom pilot</span>
+              <span className="block text-[10px] font-medium text-slate-500">Classroom</span>
             </span>
           </Link>
-          <Link to="/" className="text-xs font-semibold text-slate-500 transition hover:text-ink-950">
-            Demo workspace
-          </Link>
+          <span className="text-xs font-semibold text-slate-500">Classroom pilot</span>
         </div>
       </header>
 
@@ -72,7 +70,7 @@ export default function PortalLanding() {
               <Sparkles className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 className="text-base font-bold">How the pilot works</h2>
+              <h2 className="text-base font-bold">How it works</h2>
               <ol className="mt-3 grid gap-3 text-sm leading-6 text-slate-600 sm:grid-cols-3">
                 <li>
                   <span className="font-semibold text-ink-950">1. Create a class.</span> The server issues a

@@ -1,5 +1,3 @@
-import { demoMasteryAnswers, demoDiagnosticAnswers } from "../domain/questions.js";
-
 export const ACTIVE_STATUSES = ["diagnostic", "analyzing", "learning", "mastery", "retry", "error"];
 
 export const STATUS_LABELS = {
@@ -56,8 +54,6 @@ export function buildLearnerState(learner, sessions) {
     grade: learner.grade,
     subject: learner.subject,
     topic: learner.topic,
-    isDemo: Boolean(learner.isDemo),
-    accent: learner.accent || "mint",
     status: statusKey,
     statusLabel: STATUS_LABELS[statusKey] || statusKey,
     progressPercent: progressPercentFor(latest),
@@ -74,12 +70,4 @@ export function buildLearnerState(learner, sessions) {
     lastActivityAt: latest?.lastActivityAt || latest?.updatedAt || null,
     passedCycle: latest?.status === "complete" ? Boolean(lastAttempt?.mastery?.result?.thresholdMet) : null,
   };
-}
-
-export function demoDiagnosticAnswerFor(questionId) {
-  return demoDiagnosticAnswers[questionId] || undefined;
-}
-
-export function demoMasteryAnswerFor(gapKey, attempt, questionId) {
-  return demoMasteryAnswers[gapKey]?.[attempt]?.[questionId] || undefined;
 }

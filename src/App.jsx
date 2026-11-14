@@ -1,13 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import AppShell from "./components/AppShell.jsx";
 import PortalShell from "./components/PortalShell.jsx";
 import RequireRole from "./components/RequireRole.jsx";
-import Overview from "./pages/Overview.jsx";
-import LearnerWorkspace from "./pages/LearnerWorkspace.jsx";
-import AgentActivity from "./pages/AgentActivity.jsx";
-import TeacherDashboard from "./pages/TeacherDashboard.jsx";
-import TeacherLearnerDetail from "./pages/TeacherLearnerDetail.jsx";
-import NotFound from "./pages/NotFound.jsx";
 import PortalLanding from "./pages/portal/PortalLanding.jsx";
 import PrivacyNotice from "./pages/portal/PrivacyNotice.jsx";
 import TeacherLogin from "./pages/portal/TeacherLogin.jsx";
@@ -18,14 +11,28 @@ import TeacherVerifyEmail from "./pages/portal/TeacherVerifyEmail.jsx";
 import StudentJoin from "./pages/portal/StudentJoin.jsx";
 import TeacherClasses from "./pages/portal/TeacherClasses.jsx";
 import TeacherClassDetail from "./pages/portal/TeacherClassDetail.jsx";
-import TeacherBilling from "./pages/portal/TeacherBilling.jsx";
+import TeacherResources from "./pages/portal/TeacherResources.jsx";
 import ClassroomStudentProgress from "./pages/portal/ClassroomStudentProgress.jsx";
 import StudentHome from "./pages/portal/StudentHome.jsx";
 import StudentLearning from "./pages/portal/StudentLearning.jsx";
 
+function NotFound() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6">
+      <div className="max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-soft">
+        <p className="text-xs font-bold uppercase tracking-wide text-slate-500">404</p>
+        <h1 className="mt-2 text-2xl font-bold text-ink-950">Page not found</h1>
+        <p className="mt-2 text-sm text-slate-600">The page you requested does not exist.</p>
+        <a href="/portal" className="mt-5 inline-flex rounded-xl bg-ink-950 px-4 py-2 text-sm font-semibold text-white">Go to class portal</a>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <Routes>
+      <Route index element={<Navigate to="/portal" replace />} />
       <Route path="portal" element={<PortalLanding />} />
       <Route path="privacy" element={<PrivacyNotice />} />
       <Route path="portal/teacher/login" element={<TeacherLogin />} />
@@ -53,10 +60,10 @@ export default function App() {
           }
         />
         <Route
-          path="portal/teacher/billing"
+          path="portal/teacher/resources"
           element={
             <RequireRole role="teacher">
-              <TeacherBilling />
+              <TeacherResources />
             </RequireRole>
           }
         />
@@ -86,15 +93,7 @@ export default function App() {
         />
       </Route>
 
-      <Route element={<AppShell />}>
-        <Route index element={<Overview />} />
-        <Route path="learner" element={<LearnerWorkspace />} />
-        <Route path="activity" element={<AgentActivity />} />
-        <Route path="teacher" element={<TeacherDashboard />} />
-        <Route path="teacher/learners/:learnerId" element={<TeacherLearnerDetail />} />
-        <Route path="home" element={<Navigate to="/" replace />} />
-        <Route path="*" element={<NotFound />} />
-      </Route>
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }

@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { UserPlus } from "lucide-react";
 import AuthLayout from "../../components/AuthLayout.jsx";
 import { Alert, Button } from "../../components/ui.jsx";
 import { Field, inputClasses } from "../../components/forms.jsx";
-import { api } from "../../lib/api.js";
 import { useAuth } from "../../context/AuthContext.jsx";
 
 const MIN_PASSWORD = 8;
@@ -18,21 +17,12 @@ export default function TeacherSignup() {
     email: "",
     password: "",
     confirm: "",
-    inviteCode: "",
   });
-  const [inviteRequired, setInviteRequired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
 
   const update = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
-
-  useEffect(() => {
-    api
-      .authConfig()
-      .then((data) => setInviteRequired(Boolean(data?.pilotInviteRequired)))
-      .catch(() => {});
-  }, []);
 
   if (!loading && user?.role === "teacher") {
     return <Navigate to="/portal/teacher" replace />;
@@ -42,7 +32,6 @@ export default function TeacherSignup() {
     const next = {};
     if (!form.name.trim()) next.name = "Enter your name.";
     if (!form.email.trim()) next.email = "Enter your email.";
-    if (inviteRequired && !form.inviteCode.trim()) next.inviteCode = "Enter your pilot invite code.";
     if (form.password.length < MIN_PASSWORD) next.password = `Use at least ${MIN_PASSWORD} characters.`;
     if (form.confirm !== form.password) next.confirm = "The passwords do not match.";
     setFieldErrors(next);
@@ -60,7 +49,6 @@ export default function TeacherSignup() {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
-        ...(inviteRequired ? { inviteCode: form.inviteCode.trim() } : {}),
       });
       navigate("/portal/teacher", { replace: true });
     } catch (err) {
@@ -113,26 +101,6 @@ export default function TeacherSignup() {
           />
         </Field>
 
-        {inviteRequired ? (
-          <Field
-            id="inviteCode"
-            label="Pilot invite code"
-            hint="Ask the pilot coordinator for this code."
-            error={fieldErrors.inviteCode}
-          >
-            <input
-              id="inviteCode"
-              type="text"
-              autoComplete="off"
-              required
-              value={form.inviteCode}
-              onChange={update("inviteCode")}
-              className={inputClasses}
-              placeholder="Pilot invite code"
-            />
-          </Field>
-        ) : null}
-
         <Field
           id="password"
           label="Password"
@@ -169,7 +137,7 @@ export default function TeacherSignup() {
         </Button>
 
         <p className="text-center text-xs leading-5 text-slate-500">
-          By creating an account you agree to the pilot{" "}
+          By creating an account you agree to the{" "}
           <Link to="/privacy" className="font-semibold text-mint-700 underline hover:text-mint-800">
             privacy notice
           </Link>

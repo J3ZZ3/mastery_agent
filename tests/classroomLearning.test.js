@@ -4,8 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-process.env.DEMO_DELAY_MS = "0";
-process.env.AI_PROVIDER = "demo";
+process.env.AI_PROVIDER = "test";
 process.env.EMAIL_DELIVERY = "disabled";
 const testDataDir = await mkdtemp(path.join(tmpdir(), "mastery-learning-test-"));
 process.env.MASTERY_DATA_DIR = testDataDir;
@@ -208,7 +207,7 @@ test("a classroom student completes the full six-agent cycle", { skip }, async (
   const diagnostic = await request(`/student/sessions/${sessionId}/diagnostic`, {
     method: "POST",
     cookie: studentACookie,
-    body: { answers: { d1: "-1", d2: "3", d3: "3", d4: "6", d5: "3" } },
+    body: { answers: { d1: "x=2", d2: "3x+2", d3: "3", d4: "6", d5: "3" } },
   });
 
   assert.equal(diagnostic.status, 200);
@@ -239,7 +238,7 @@ test("a classroom student completes the full six-agent cycle", { skip }, async (
   const mastery = await request(`/student/sessions/${sessionId}/mastery`, {
     method: "POST",
     cookie: studentACookie,
-    body: { answers: { m1a: "-3", m1b: "-4", m1c: "8", m1d: "8", m1e: "2" } },
+    body: { answers: { m11: "1", m12: "2", m13: "3", m14: "4", m15: "5" } },
   });
   assert.equal(mastery.status, 200);
   assert.equal(mastery.body.session.status, "complete");

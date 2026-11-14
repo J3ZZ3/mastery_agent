@@ -5,15 +5,15 @@ import { buildAssessmentReport, runAssessmentAgent } from "../server/agents/asse
 import { buildIntervention } from "../server/agents/learningDesignerAgent.js";
 import { buildTutorResult, runTutorAgent } from "../server/agents/tutorAgent.js";
 import {
-  buildMasteryQuestions,
   buildMasteryResult,
   runMasteryQuestionsAgent,
   runMasteryEvaluationAgent,
 } from "../server/agents/masteryAgent.js";
+import { config } from "../server/config.js";
 
 const aiWith = (change) => ({
-  async generateJSON({ fallback }) {
-    return { data: change(structuredClone(fallback)), meta: { provider: "openai" } };
+  async generateJSON({ example }) {
+    return { data: change(structuredClone(example)), meta: { provider: "groq" } };
   },
 });
 
@@ -41,9 +41,8 @@ test("model output cannot alter diagnostic or practice scores", async () => {
   assert.equal(tutor.data.needsReteach, expectedPractice.needsReteach);
 });
 
-test("model output cannot change the question bank, mastery threshold or pass decision", async () => {
+test("model output cannot change the mastery threshold or pass decision", async () => {
   const gapKey = "negative_operations";
-  const expectedQuestions = buildMasteryQuestions({ gapKey, attempt: 1 });
   const generated = await runMasteryQuestionsAgent({
     gapKey,
     attempt: 1,
@@ -53,12 +52,17 @@ test("model output cannot change the question bank, mastery threshold or pass de
       questions: data.questions.map((question) => ({ ...question, correctAnswer: "wrong" })),
     })),
   });
-  assert.equal(generated.data.threshold, expectedQuestions.threshold);
-  assert.deepEqual(
-    generated.data.questions.map(({ id, correctAnswer }) => ({ id, correctAnswer })),
-    expectedQuestions.questions.map(({ id, correctAnswer }) => ({ id, correctAnswer })),
-  );
-  const answers = Object.fromEntries(generated.data.questions.map((question) => [question.id, "wrong"]));
+  // The threshold is anchored in config, never taken from the model.
+  assert.equal(generated.data.threshold, config.masteryThreshold);
+  // Questions are generated live, so the model supplies the fresh items; the
+  // prompt must still be clean and the answer key present.
+  assert.equal(generated.data.questions.length, 5);
+  for (const question of generated.data.questions) {
+    assert.equal(question.correctAnswer, "wrong");
+    assert.equal(question.prompt.includes("$"), false);
+  }
+
+  const answers = Object.fromEntries(generated.data.questions.map((question) => [question.id, "not-the-answer"]));
   const expected = buildMasteryResult({ questions: generated.data.questions, answers, attempt: 1, initialScore: 40 });
   const result = await runMasteryEvaluationAgent({
     questions: generated.data.questions,

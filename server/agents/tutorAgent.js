@@ -1,10 +1,11 @@
 import { parseWith, tutorResultSchema } from "../validation/schemas.js";
 import { skillLabel } from "../domain/skills.js";
+import { isAnswerCorrect } from "../domain/answer.js";
 
 export function evaluatePractice(intervention, answers) {
   return intervention.practiceQuestions.map((question) => {
     const learnerAnswer = String(answers[question.id] ?? "").trim();
-    const correct = learnerAnswer === String(question.correctAnswer);
+    const correct = isAnswerCorrect(learnerAnswer, question.correctAnswer);
     const feedback = correct
       ? `Correct. ${question.explanation}`
       : `Not quite. ${question.hint} Once you have retried, check the worked example that uses the same move.`;
@@ -58,34 +59,41 @@ export function buildTutorResult({ intervention, answers }) {
   );
 }
 
-export async function runTutorAgent({ intervention, answers, ai, latencyMs = 0 }) {
-  const fallback = buildTutorResult({ intervention, answers });
+export async function runTutorAgent({ intervention, answers, ai, latencyMs = 0, curriculum = null }) {
+  // Grading is objective; the model writes the feedback and next focus.
+  const groundTruth = buildTutorResult({ intervention, answers });
 
   const { data, meta } = await ai.generateJSON({
     schema: tutorResultSchema,
-    fallback,
+    example: groundTruth,
     latencyMs,
     label: "Tutor Agent",
-    instructions:
+    instructions: [
       "Evaluate the practice answers. Feedback must be supportive, specific and must not reward an incorrect answer. Do not label the learner. Use the supplied explanations rather than inventing new mathematics.",
-    payload: { intervention, answers, threshold: 67 },
+      curriculum
+        ? "Learner book context is provided. When giving feedback or next focus, point the learner to the relevant book topic/page/step from the provided outline or excerpts (e.g. 'see p36'). Do not invent page numbers."
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    payload: { intervention, answers, threshold: 67, curriculum },
   });
 
   return {
     data: {
       ...data,
-      total: fallback.total,
-      correct: fallback.correct,
-      scorePercent: fallback.scorePercent,
-      results: fallback.results,
-      needsReteach: fallback.needsReteach,
+      total: groundTruth.total,
+      correct: groundTruth.correct,
+      scorePercent: groundTruth.scorePercent,
+      results: groundTruth.results,
+      needsReteach: groundTruth.needsReteach,
     },
     meta,
   };
 }
 
 export function checkPracticeAnswer({ question, answer }) {
-  const correct = String(answer) === String(question.correctAnswer);
+  const correct = isAnswerCorrect(answer, question.correctAnswer);
 
   if (correct) {
     return {

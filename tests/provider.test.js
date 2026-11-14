@@ -31,9 +31,10 @@ process.env.OPENAI_API_KEY = "local-test-key";
 process.env.OPENAI_MODEL = "local-test-model";
 process.env.OPENAI_TIMEOUT_MS = "100";
 const { openaiProvider } = await import("../server/providers/openaiProvider.js");
+const { ProviderError } = await import("../server/providers/openaiCompatible.js");
 const args = {
   schema: z.object({ message: z.string() }),
-  fallback: { message: "deterministic" },
+  example: { message: "shape example only" },
   instructions: "Return the test message.",
   payload: { input: "test" },
   label: "Test Agent",
@@ -49,24 +50,35 @@ test("OpenAI provider sends a server-side request and returns validated model ou
   const result = await openaiProvider.generateJSON(args);
   assert.equal(result.data.message, "from model");
   assert.equal(result.meta.provider, "openai");
+  assert.equal(result.meta.fallbackUsed, undefined);
   assert.equal(received.url, "/v1/chat/completions");
   assert.equal(received.authorization, "Bearer local-test-key");
   assert.equal(received.body.model, "local-test-model");
 });
 
-test("OpenAI provider uses the fallback for invalid responses and redacts HTTP response bodies", async () => {
+test("an invalid model response throws instead of returning the example", async () => {
   behavior = "invalid";
-  let result = await openaiProvider.generateJSON(args);
-  assert.equal(result.data.message, "deterministic");
-  assert.equal(result.meta.provider, "openai-fallback");
-  behavior = "http-error";
-  result = await openaiProvider.generateJSON(args);
-  assert.equal(result.meta.error, "Provider returned HTTP 401");
+  await assert.rejects(
+    () => openaiProvider.generateJSON(args),
+    (error) => error instanceof ProviderError && /did not return a JSON object/.test(error.message),
+  );
 });
 
-test("OpenAI timeout also applies while reading the response body", async () => {
+test("an HTTP error is reported without leaking the provider body", async () => {
+  behavior = "http-error";
+  await assert.rejects(
+    () => openaiProvider.generateJSON(args),
+    (error) =>
+      error instanceof ProviderError &&
+      /HTTP 401/.test(error.message) &&
+      !/sensitive provider response/.test(error.message),
+  );
+});
+
+test("a timeout throws a provider error", async () => {
   behavior = "timeout";
-  const result = await openaiProvider.generateJSON(args);
-  assert.equal(result.meta.provider, "openai-fallback");
-  assert.equal(result.meta.error, "Provider request timed out.");
+  await assert.rejects(
+    () => openaiProvider.generateJSON(args),
+    (error) => error instanceof ProviderError && /timed out/.test(error.message),
+  );
 });

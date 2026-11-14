@@ -1,25 +1,23 @@
+import { sanitizeQuestionPrompt } from "../domain/answer.js";
+
 export function publicQuestion(question) {
   return {
     id: question.id,
-    prompt: question.prompt,
-    options: [...question.options],
+    prompt: sanitizeQuestionPrompt(question.prompt),
     skill: question.skill,
-    ...(question.demoAnswer ? { demoAnswer: question.demoAnswer } : {}),
   };
 }
 
-export function publicPracticeQuestion(question, includeDemoAnswer = false) {
+export function publicPracticeQuestion(question) {
   return {
     id: question.id,
-    prompt: question.prompt,
-    options: [...question.options],
+    prompt: sanitizeQuestionPrompt(question.prompt),
     skill: question.skill,
     hint: question.hint,
-    ...(includeDemoAnswer ? { demoAnswer: question.correctAnswer } : {}),
   };
 }
 
-export function publicIntervention(intervention, includeDemoAnswers = false) {
+export function publicIntervention(intervention) {
   if (!intervention) return null;
   return {
     gapKey: intervention.gapKey,
@@ -29,9 +27,7 @@ export function publicIntervention(intervention, includeDemoAnswers = false) {
     sections: intervention.sections,
     numberLine: intervention.numberLine,
     workedExamples: intervention.workedExamples,
-    practiceQuestions: intervention.practiceQuestions.map((question) =>
-      publicPracticeQuestion(question, includeDemoAnswers),
-    ),
+    practiceQuestions: intervention.practiceQuestions.map((question) => publicPracticeQuestion(question)),
     recap: intervention.recap,
     adapted: intervention.adapted,
     adaptationNote: intervention.adaptationNote,
@@ -40,7 +36,6 @@ export function publicIntervention(intervention, includeDemoAnswers = false) {
 
 export function serializeSession(session) {
   if (!session) return null;
-  const demoMode = Boolean(session.demoMode);
 
   return {
     id: session.id,
@@ -48,7 +43,7 @@ export function serializeSession(session) {
     status: session.status,
     attempt: session.attempt,
     threshold: session.threshold,
-    isDemo: demoMode,
+    curriculum: session.curriculum || null,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     lastActivityAt: session.lastActivityAt,
@@ -58,12 +53,20 @@ export function serializeSession(session) {
       questions: session.diagnostic.questions.map(publicQuestion),
       answers: session.diagnostic.answers,
       submittedAt: session.diagnostic.submittedAt,
-      report: session.diagnostic.report,
+      report: session.diagnostic.report
+        ? {
+            ...session.diagnostic.report,
+            items: (session.diagnostic.report.items || []).map((item) => ({
+              ...item,
+              prompt: sanitizeQuestionPrompt(item.prompt),
+            })),
+          }
+        : session.diagnostic.report,
     },
     diagnosis: session.diagnosis,
     attempts: session.attempts.map((attempt) => ({
       attempt: attempt.attempt,
-      intervention: publicIntervention(attempt.intervention, demoMode),
+      intervention: publicIntervention(attempt.intervention),
       createdAt: attempt.createdAt,
       practice: {
         answers: attempt.practice.answers,
@@ -91,19 +94,15 @@ export function sessionSummary(session) {
   const lastAttempt = session.attempts[session.attempts.length - 1] || null;
   return {
     id: session.id,
+    learnerId: session.learnerId,
     status: session.status,
     attempt: session.attempt,
-    threshold: session.threshold,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     completedAt: session.completedAt || null,
-    initialScore: session.diagnostic.report?.scorePercent ?? null,
-    initialCorrect: session.diagnostic.report?.correctAnswers ?? null,
-    totalQuestions: session.diagnostic.report?.totalQuestions ?? null,
+    initialScore: session.diagnostic?.report?.scorePercent ?? null,
     latestScore: lastAttempt?.mastery?.result?.scorePercent ?? null,
     masteryMet: lastAttempt?.mastery?.result?.thresholdMet ?? null,
     gap: session.diagnosis?.suspectedGap ?? null,
-    practiceScore: lastAttempt?.practice?.result?.scorePercent ?? null,
-    attempts: session.attempts.length,
   };
 }
