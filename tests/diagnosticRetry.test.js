@@ -112,6 +112,46 @@ const store = {
 
 const answers = { d1: "6x", d2: "10" };
 
+const question = (id, prompt, correctAnswer, explanation) => ({
+  id,
+  prompt,
+  hint: "Use the method from the lesson.",
+  skill: "algebra",
+  correctAnswer,
+  explanation,
+  misconceptions: {},
+});
+
+const baseQuestions = [
+  question("d1", "Simplify 3x + 2x", "5x", "3x + 2x = 5x."),
+  question("d2", "Solve x + 3 = 7", "4", "x = 7 - 3 = 4."),
+];
+
+const makeSession = (id, overrides = {}) => ({
+  id,
+  learnerId: "learner_retry_test",
+  status: "diagnostic",
+  attempt: 0,
+  threshold: 80,
+  curriculum: null,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  lastActivityAt: new Date().toISOString(),
+  completedAt: null,
+  diagnostic: {
+    questions: baseQuestions,
+    answers: {},
+    submittedAt: null,
+    report: null,
+  },
+  diagnosis: null,
+  attempts: [],
+  teacherInsight: null,
+  events: [],
+  error: null,
+  ...overrides,
+});
+
 test("a failed diagnostic can be retried without redoing the assessment", async () => {
   await assert.rejects(() => submitDiagnostic(session.id, answers, store));
 
@@ -131,4 +171,45 @@ test("a failed diagnostic can be retried without redoing the assessment", async 
   // Only the designer is retried; assessment and diagnosis are reused.
   assert.deepEqual(calls, ["Learning Designer Agent"]);
   assert.equal(retried.error, null);
+});
+
+test("a stale analyzing session can be resumed without redoing the diagnostic", async () => {
+  const stale = makeSession("ses_stale_test", {
+    status: "analyzing",
+    updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    diagnostic: {
+      questions: baseQuestions,
+      answers,
+      submittedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      report: { totalQuestions: 2, correctAnswers: 0, scorePercent: 0, items: [], identifiedPatterns: [] },
+    },
+    diagnosis: {
+      gapKey: "negative_operations",
+      suspectedGap: "Combining like terms",
+      relatedConcept: "Algebraic expressions",
+      evidence: ["3x + 2x answered as 6x"],
+      confidence: 0.8,
+      reasoning: "Both items were incorrect.",
+      isSurfaceLevel: false,
+      severity: "high",
+    },
+  });
+  store.sessions.set(stale.id, structuredClone(stale));
+
+  calls.length = 0;
+  const resumed = await submitDiagnostic(stale.id, {}, store);
+
+  assert.equal(resumed.status, "learning");
+  assert.equal(resumed.attempts.length, 1);
+  assert.deepEqual(calls, ["Learning Designer Agent"]);
+});
+
+test("a fresh analyzing session cannot be submitted twice", async () => {
+  const fresh = makeSession("ses_fresh_test", { status: "analyzing" });
+  store.sessions.set(fresh.id, structuredClone(fresh));
+
+  await assert.rejects(
+    () => submitDiagnostic(fresh.id, {}, store),
+    (error) => error.status === 409,
+  );
 });

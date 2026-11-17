@@ -206,13 +206,22 @@ export async function submitDiagnostic(sessionId, answers, store = demoSessionSt
   }
 
   const retrying = session.status === "error";
-  if (session.status !== "diagnostic" && !retrying) {
+  // A server restart or crash can leave a session in "analyzing" with no agent
+  // running. Allow a retry once it is clearly stale, so the learner is not
+  // locked out of their cycle.
+  const ANALYSIS_STALE_MS = 5 * 60 * 1000;
+  const staleAnalyzing =
+    session.status === "analyzing" &&
+    Date.now() - new Date(session.updatedAt || 0).getTime() > ANALYSIS_STALE_MS;
+  const resuming = retrying || staleAnalyzing;
+
+  if (session.status !== "diagnostic" && !resuming) {
     throw new AppError(409, "This diagnostic has already been submitted.");
   }
 
   // On a retry the learner keeps the answers they already gave; they do not
   // have to redo the diagnostic. Any newly submitted answers are merged in.
-  const effectiveAnswers = retrying
+  const effectiveAnswers = resuming
     ? { ...(session.diagnostic.answers || {}), ...answers }
     : answers;
 

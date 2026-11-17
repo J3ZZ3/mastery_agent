@@ -47,7 +47,13 @@ function agentActivity(events, key) {
   return { ...meta, detail };
 }
 
-function AnalysisCard({ session, onRefresh, busy, liveEvents = [] }) {
+function AnalysisCard({ session, onRefresh, busy, liveEvents = [], onRetry }) {
+  const stalled =
+    Boolean(onRetry) &&
+    !busy &&
+    session?.status === "analyzing" &&
+    Date.now() - new Date(session.updatedAt || 0).getTime() > 5 * 60 * 1000;
+
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-slate-100 bg-gradient-to-br from-sky-50 to-white p-6">
@@ -84,13 +90,26 @@ function AnalysisCard({ session, onRefresh, busy, liveEvents = [] }) {
             );
           })}
         </ol>
+        {stalled ? (
+          <Alert tone="warning" title="This step is taking longer than expected" className="mt-4">
+            The analysis paused, but your answers are saved. You can pick it up from where it stopped without redoing
+            the diagnostic.
+          </Alert>
+        ) : null}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-slate-500">
             Keep this page open. You can also refresh if the connection drops.
           </p>
-          <Button variant="secondary" size="sm" icon={RefreshCw} onClick={onRefresh} loading={busy}>
-            Refresh status
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {stalled ? (
+              <Button variant="mint" size="sm" icon={RefreshCw} onClick={() => onRetry(session.diagnostic?.answers || {})}>
+                Try the analysis again
+              </Button>
+            ) : null}
+            <Button variant="secondary" size="sm" icon={RefreshCw} onClick={onRefresh} loading={busy}>
+              Refresh status
+            </Button>
+          </div>
         </div>
         {session?.status === "error" ? (
           <Alert tone="error" title="A step could not finish" className="mt-4">
@@ -257,7 +276,15 @@ export default function LearningCycle({
     }
 
     if (session.status === "analyzing") {
-      return <AnalysisCard session={session} onRefresh={onRefresh} busy={loading} liveEvents={liveEvents} />;
+      return (
+        <AnalysisCard
+          session={session}
+          onRefresh={onRefresh}
+          busy={loading}
+          liveEvents={liveEvents}
+          onRetry={onRetryDiagnostic}
+        />
+      );
     }
 
     if (session.status === "diagnostic") {
