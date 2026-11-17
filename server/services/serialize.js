@@ -1,4 +1,5 @@
 import { sanitizeQuestionPrompt } from "../domain/answer.js";
+import { sanitizeAgentError } from "../lib/agentErrors.js";
 
 export function publicQuestion(question) {
   return {
@@ -48,7 +49,7 @@ export function serializeSession(session) {
     updatedAt: session.updatedAt,
     lastActivityAt: session.lastActivityAt,
     completedAt: session.completedAt || null,
-    error: session.error || null,
+    error: sanitizeAgentError(session.error),
     diagnostic: {
       questions: session.diagnostic.questions.map(publicQuestion),
       answers: session.diagnostic.answers,

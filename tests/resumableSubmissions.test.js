@@ -223,6 +223,21 @@ const resetCalls = (nextFailures = {}) => {
   failures = nextFailures;
 };
 
+test("provider failures are stored as a short, student-safe message", async () => {
+  resetCalls({ tutor: 1 });
+  const session = makeSession();
+  const store = makeStore(session);
+
+  await assert.rejects(
+    () => submitPractice(session.id, { p1: "5x", p2: "5" }, store),
+    (error) => error.status === 503 && /briefly busy/i.test(error.message),
+  );
+
+  const failed = await store.findSession(session.id);
+  assert.match(failed.error, /briefly busy/i);
+  assert.doesNotMatch(failed.error, /groq|429|upgrade|billing|organization/i);
+});
+
 test("a failed practice review resumes without redoing the practice set", async () => {
   resetCalls({ tutor: 1 });
   const session = makeSession();

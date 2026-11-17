@@ -22,8 +22,10 @@ const providers = models.map((model) =>
     timeoutMs: config.groq.timeoutMs,
     maxTokens: config.groq.maxTokens,
     maxRetries: config.groq.fallbackRetries,
-    // Do not sit on a long retry hint when another model could answer now.
-    retryDelayCapMs: 8000,
+    // Groq's TPM limit is per model and clears on a rolling window. Honour its
+    // retry hint (often 10-30s) instead of giving up early and burning the
+    // next model's budget too.
+    retryDelayCapMs: 30000,
   }),
 );
 

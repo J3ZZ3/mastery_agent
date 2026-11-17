@@ -7,6 +7,7 @@ import { apiRouter } from "./routes/index.js";
 import { config } from "./config.js";
 import { attachAuth } from "./auth/middleware.js";
 import { requireTrustedOrigin } from "./lib/originGuard.js";
+import { AGENTS_BUSY_MESSAGE } from "./lib/agentErrors.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(here, "..", "dist");
@@ -72,6 +73,16 @@ export function createApp() {
   }
 
   app.use((error, _req, res, _next) => {
+    // Provider errors are operational and may contain internal details such as
+    // organisation ids or billing links. Log the detail, show a short message.
+    if (error.name === "ProviderError") {
+      console.error("[MASTERY] AI provider error:", error.message);
+      res.status(503).json({
+        error: AGENTS_BUSY_MESSAGE,
+      });
+      return;
+    }
+
     const status = error.status || 500;
     if (status >= 500) {
       console.error("[MASTERY] Unhandled server error:", error);

@@ -1,6 +1,7 @@
 import { config } from "../config.js";
 import { newId, nowIso } from "../lib/id.js";
 import { AppError } from "../lib/errors.js";
+import { friendlyAgentMessage } from "../lib/agentErrors.js";
 import { getAiProvider } from "../providers/index.js";
 import { runAssessmentAgent, runDiagnosticQuestionsAgent } from "../agents/assessmentAgent.js";
 import { sanitizeQuestionPrompt } from "../domain/answer.js";
@@ -83,10 +84,15 @@ async function trackAgent({
 }
 
 async function markError(session, error, store) {
+  const message = friendlyAgentMessage(error);
+  if (message !== error.message) {
+    console.warn(`[agents] ${session.id} paused: ${error.message}`);
+  }
   session.status = "error";
-  session.error = error.message;
+  session.error = message;
   session.updatedAt = nowIso();
   await store.replaceSession(session);
+  return message === error.message ? error : new AppError(503, message);
 }
 
 const assessmentSummary = (data) =>
@@ -316,8 +322,7 @@ export async function submitDiagnostic(sessionId, answers, store = demoSessionSt
     await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error, store);
-    throw error;
+    throw await markError(session, error, store);
   }
 }
 
@@ -471,8 +476,7 @@ export async function submitPractice(sessionId, answers, store = demoSessionStor
     await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error, store);
-    throw error;
+    throw await markError(session, error, store);
   }
 }
 
@@ -626,8 +630,7 @@ export async function submitMastery(sessionId, answers, store = demoSessionStore
     await store.replaceSession(session);
     return session;
   } catch (error) {
-    await markError(session, error, store);
-    throw error;
+    throw await markError(session, error, store);
   }
 }
 
