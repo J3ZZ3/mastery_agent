@@ -449,34 +449,94 @@ export default function LearningCycle({
       );
     }
 
+    if (busy && session.status === "error" && session.attempts?.length) {
+      return (
+        <Card className="p-6">
+          <div className="flex items-start gap-4">
+            <span className="rounded-2xl bg-sky-100 p-3 text-sky-700">
+              <Spinner className="h-6 w-6" />
+            </span>
+            <div>
+              <p className="eyebrow">Agents at work</p>
+              <h2 className="mt-1 text-xl font-bold">Picking up where the step stopped</h2>
+              <p className="mt-1.5 max-w-xl text-sm leading-6 text-slate-600">
+                Your answers are saved, so you do not need to redo this part. The agent continues from the step that
+                failed.
+              </p>
+            </div>
+          </div>
+        </Card>
+      );
+    }
+
     if (session.status === "error") {
-      const savedAnswers = session.diagnostic?.answers || {};
+      const practice = attempt?.practice;
+      const mastery = attempt?.mastery;
+      const previousAttempt =
+        session.attempts?.length > 1 ? session.attempts[session.attempts.length - 2] : null;
+
+      const savedDiagnostic = session.diagnostic?.answers || {};
+      const savedPractice = practice?.answers || {};
+      const savedMastery = mastery?.answers || {};
+
       const canRetryAnalysis =
         !session.attempts?.length &&
         Boolean(session.diagnostic?.submittedAt) &&
-        Object.keys(savedAnswers).length > 0;
+        Object.keys(savedDiagnostic).length > 0;
+      const canResumeAdapted =
+        !mastery &&
+        Boolean(attempt) &&
+        attempt.attempt > 1 &&
+        Boolean(previousAttempt?.mastery?.result);
+      const canRetryMastery =
+        Boolean(mastery?.questions?.length) && Object.keys(savedMastery).length > 0;
+      const canRetryPractice =
+        !canRetryMastery && !canResumeAdapted && Boolean(practice) && Object.keys(savedPractice).length > 0;
+
+      const recovery = canRetryAnalysis
+        ? {
+            title: "The analysis stopped before it finished",
+            body: "Your diagnostic answers are saved, so you do not need to redo the assessment.",
+            label: "Try the analysis again",
+            onClick: () => onRetryDiagnostic?.(savedDiagnostic),
+          }
+        : canResumeAdapted
+          ? {
+              title: "The adapted lesson stopped before it was ready",
+              body: "The previous mastery check is saved, so you can continue with the adapted attempt.",
+              label: "Open the adapted lesson",
+              onClick: () => onSubmitMastery?.(previousAttempt?.mastery?.answers || {}),
+            }
+          : canRetryMastery
+            ? {
+                title: "The mastery check stopped before it finished",
+                body: "Your mastery answers are saved, so you do not need to redo the check.",
+                label: "Try the mastery check again",
+                onClick: () => onSubmitMastery?.(savedMastery),
+              }
+            : canRetryPractice
+              ? {
+                  title: "The practice review stopped before it finished",
+                  body: "Your practice answers are saved, so you do not need to redo the practice set.",
+                  label: "Try the practice again",
+                  onClick: () => onFinishPractice?.(savedPractice),
+                }
+              : null;
 
       return (
         <div className="space-y-4">
-          <Alert tone="error" title="The analysis stopped before it finished">
+          <Alert tone="error" title={recovery?.title || "This cycle stopped before it finished"}>
             {session.error || "An agent step failed."}
-            {canRetryAnalysis
-              ? " Your answers are saved, so you do not need to redo the diagnostic."
-              : " You can restart the cycle."}
+            {recovery ? ` ${recovery.body}` : " You can restart the cycle."}
           </Alert>
           <div className="flex flex-wrap items-center gap-3">
-            {canRetryAnalysis ? (
-              <Button
-                variant="mint"
-                icon={RefreshCw}
-                onClick={() => onRetryDiagnostic?.(savedAnswers)}
-                loading={busy}
-              >
-                Try the analysis again
+            {recovery ? (
+              <Button variant="mint" icon={RefreshCw} onClick={recovery.onClick} loading={busy}>
+                {recovery.label}
               </Button>
             ) : null}
             <Button variant="secondary" icon={RotateCcw} onClick={() => onStart(true)} loading={busy}>
-              {canRetryAnalysis ? "Start a new diagnostic instead" : "Restart the diagnostic"}
+              {recovery ? "Start a new cycle instead" : "Restart the diagnostic"}
             </Button>
           </div>
         </div>

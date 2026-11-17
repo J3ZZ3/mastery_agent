@@ -110,6 +110,7 @@ function buildAttempt(attemptNumber, intervention) {
     practice: {
       answers: {},
       startedAt: null,
+      submittedAt: null,
       completedAt: null,
       result: null,
     },
@@ -365,18 +366,39 @@ export async function checkPractice(sessionId, { questionId, answer }, store = d
 export async function submitPractice(sessionId, answers, store = demoSessionStore) {
   const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
-  if (!["learning", "retry"].includes(session.status)) {
+
+  const resuming = session.status === "error";
+  if (!["learning", "retry"].includes(session.status) && !resuming) {
     throw new AppError(409, "Practice is not open for this session.");
   }
 
   const attempt = session.attempts[session.attempts.length - 1];
   if (!attempt) throw new AppError(409, "No active attempt found.");
-  if (attempt.practice.result) return session;
 
-  validateAllAnswered(attempt.intervention.practiceQuestions, answers, "practice");
-  attempt.practice.answers = { ...attempt.practice.answers, ...answers };
+  // A repeat submission after the tutor already reviewed the set resumes at
+  // the mastery-question step instead of re-running (and re-paying for) the
+  // review.
+  if (attempt.practice.result && !resuming) return session;
 
-  if (!attempt.practice.startedAt) {
+  // On a retry the learner keeps the practice answers they already gave; they
+  // do not have to redo the practice set. Any newly submitted answers are
+  // merged in.
+  const effectiveAnswers = resuming
+    ? { ...(attempt.practice.answers || {}), ...answers }
+    : answers;
+
+  if (!attempt.practice.result) {
+    validateAllAnswered(attempt.intervention.practiceQuestions, effectiveAnswers, "practice");
+    attempt.practice.answers = effectiveAnswers;
+    attempt.practice.submittedAt = attempt.practice.submittedAt || nowIso();
+  }
+
+  // Clear a previous failure and restore the phase this attempt belongs to.
+  session.status = attempt.attempt > 1 ? "retry" : "learning";
+  session.error = null;
+  session.updatedAt = nowIso();
+
+  if (!attempt.practice.result && !attempt.practice.startedAt) {
     attempt.practice.startedAt = nowIso();
     await recordEvent(session, {
       agent: "tutor",
@@ -384,58 +406,65 @@ export async function submitPractice(sessionId, answers, store = demoSessionStor
       message: "Guiding the learner through the lesson and practice.",
       attempt: attempt.attempt,
     }, store);
+  } else {
+    await store.replaceSession(session);
   }
 
   try {
-    await trackAgent({
-      session,
-      store,
-      agent: "tutor",
-      attempt: attempt.attempt,
-      startMessage: "Reviewing the completed practice set.",
-      run: () =>
-        runTutorAgent({
-          intervention: attempt.intervention,
-          answers: attempt.practice.answers,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        attempt.practice.result = data;
-        attempt.practice.completedAt = nowIso();
-      },
-      completedMessage: "Practice session complete.",
-      summary: tutorSummary,
-    });
+    // Resume from the first step that has not completed yet.
+    if (!attempt.practice.result) {
+      await trackAgent({
+        session,
+        store,
+        agent: "tutor",
+        attempt: attempt.attempt,
+        startMessage: "Reviewing the completed practice set.",
+        run: () =>
+          runTutorAgent({
+            intervention: attempt.intervention,
+            answers: attempt.practice.answers,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          attempt.practice.result = data;
+          attempt.practice.completedAt = nowIso();
+        },
+        completedMessage: "Practice session complete.",
+        summary: tutorSummary,
+      });
+    }
 
-    await trackAgent({
-      session,
-      store,
-      agent: "mastery",
-      attempt: attempt.attempt,
-      startMessage: "Preparing a fresh follow-up assessment.",
-      run: () =>
-        runMasteryQuestionsAgent({
-          gapKey: session.diagnosis?.gapKey,
-          attempt: attempt.attempt,
-          diagnosis: session.diagnosis,
-          report: session.diagnostic?.report,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        attempt.mastery = {
-          questions: data.questions.map((question) => ({ ...question })),
-          generatedAt: nowIso(),
-          submittedAt: null,
-          answers: {},
-          result: null,
-        };
-        session.threshold = data.threshold;
-      },
-      completedMessage: "Follow-up assessment prepared.",
-      summary: masteryQuestionsSummary,
-    });
+    if (!attempt.mastery) {
+      await trackAgent({
+        session,
+        store,
+        agent: "mastery",
+        attempt: attempt.attempt,
+        startMessage: "Preparing a fresh follow-up assessment.",
+        run: () =>
+          runMasteryQuestionsAgent({
+            gapKey: session.diagnosis?.gapKey,
+            attempt: attempt.attempt,
+            diagnosis: session.diagnosis,
+            report: session.diagnostic?.report,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          attempt.mastery = {
+            questions: data.questions.map((question) => ({ ...question })),
+            generatedAt: nowIso(),
+            submittedAt: null,
+            answers: {},
+            result: null,
+          };
+          session.threshold = data.threshold;
+        },
+        completedMessage: "Follow-up assessment prepared.",
+        summary: masteryQuestionsSummary,
+      });
+    }
 
     session.status = "mastery";
     session.updatedAt = nowIso();
@@ -450,101 +479,148 @@ export async function submitPractice(sessionId, answers, store = demoSessionStor
 export async function submitMastery(sessionId, answers, store = demoSessionStore) {
   const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
-  if (session.status !== "mastery") {
+
+  const resuming = session.status === "error";
+  if (session.status !== "mastery" && !resuming) {
     throw new AppError(409, "The mastery assessment is not open for this session.");
   }
 
   const attempt = session.attempts[session.attempts.length - 1];
-  if (!attempt?.mastery) throw new AppError(409, "No mastery assessment has been prepared.");
-  if (attempt.mastery.result) return session;
 
-  validateAllAnswered(attempt.mastery.questions, answers, "mastery");
+  // A failed run may have already adapted the intervention and pushed the next
+  // attempt. In that case there is nothing left to evaluate; just reopen it.
+  if (!attempt?.mastery) {
+    if (!resuming || !attempt || attempt.attempt <= 1) {
+      throw new AppError(409, "No mastery assessment has been prepared.");
+    }
 
-  attempt.mastery.answers = answers;
-  attempt.mastery.submittedAt = nowIso();
+    session.status = "retry";
+    session.error = null;
+    session.updatedAt = nowIso();
+    session.lastActivityAt = nowIso();
+    await store.replaceSession(session);
+    return session;
+  }
+
+  // Once the mastery result exists, a repeated submission must not re-run the
+  // evaluation. It may still need to finish the insight or adaptation step.
+  if (!attempt.mastery.result) {
+    // On a retry the learner keeps the mastery answers they already gave; any
+    // newly submitted answers are merged in.
+    const effectiveAnswers = resuming
+      ? { ...(attempt.mastery.answers || {}), ...answers }
+      : answers;
+
+    validateAllAnswered(attempt.mastery.questions, effectiveAnswers, "mastery");
+
+    attempt.mastery.answers = effectiveAnswers;
+    attempt.mastery.submittedAt = attempt.mastery.submittedAt || nowIso();
+    session.status = "mastery";
+    session.error = null;
+    session.updatedAt = nowIso();
+    await store.replaceSession(session);
+  } else {
+    // The evaluation already finished; only a later step failed.
+    if (session.status === "mastery") return session;
+    session.status = "mastery";
+    session.error = null;
+    session.updatedAt = nowIso();
+    await store.replaceSession(session);
+  }
 
   try {
-    let masteryResult;
-    await trackAgent({
-      session,
-      store,
-      agent: "mastery",
-      attempt: attempt.attempt,
-      startMessage: "Evaluating the follow-up answers against the threshold.",
-      run: () =>
-        runMasteryEvaluationAgent({
-          questions: attempt.mastery.questions,
-          answers,
-          attempt: attempt.attempt,
-          initialScore: session.diagnostic.report.scorePercent,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        masteryResult = data;
-        attempt.mastery.result = data;
-        attempt.completedAt = nowIso();
-      },
-      completedMessage: (data) => (data.thresholdMet ? "Mastery demonstrated." : "Mastery threshold not yet met."),
-      summary: masteryResultSummary,
-    });
+    let masteryResult = attempt.mastery.result;
+
+    // Resume from the first step that has not completed yet.
+    if (!masteryResult) {
+      await trackAgent({
+        session,
+        store,
+        agent: "mastery",
+        attempt: attempt.attempt,
+        startMessage: "Evaluating the follow-up answers against the threshold.",
+        run: () =>
+          runMasteryEvaluationAgent({
+            questions: attempt.mastery.questions,
+            answers: attempt.mastery.answers,
+            attempt: attempt.attempt,
+            initialScore: session.diagnostic.report.scorePercent,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          masteryResult = data;
+          attempt.mastery.result = data;
+          attempt.completedAt = nowIso();
+        },
+        completedMessage: (data) => (data.thresholdMet ? "Mastery demonstrated." : "Mastery threshold not yet met."),
+        summary: masteryResultSummary,
+      });
+    }
 
     const learner = await store.findLearner(session.learnerId);
     const passed = Boolean(masteryResult?.thresholdMet);
     const exhausted = attempt.attempt >= config.maxAttempts;
 
     if (passed || exhausted) {
-      await trackAgent({
-        session,
-        store,
-        agent: "insight",
-        attempt: attempt.attempt,
-        startMessage: "Converting the completed cycle into a teacher summary.",
-        run: () =>
-          runTeacherInsightAgent({
-            learner: learner || { name: "The learner" },
-            session,
-            ai,
-            curriculum: session.curriculum,
-          }),
-        onData: (data) => {
-          session.teacherInsight = data;
-        },
-        completedMessage: passed ? "Teacher insight ready." : "Teacher review recommended.",
-        summary: insightSummary,
-      });
+      if (!session.teacherInsight) {
+        await trackAgent({
+          session,
+          store,
+          agent: "insight",
+          attempt: attempt.attempt,
+          startMessage: "Converting the completed cycle into a teacher summary.",
+          run: () =>
+            runTeacherInsightAgent({
+              learner: learner || { name: "The learner" },
+              session,
+              ai,
+              curriculum: session.curriculum,
+            }),
+          onData: (data) => {
+            session.teacherInsight = data;
+          },
+          completedMessage: passed ? "Teacher insight ready." : "Teacher review recommended.",
+          summary: insightSummary,
+        });
+      }
 
       session.status = "complete";
-      session.completedAt = nowIso();
+      session.completedAt = session.completedAt || nowIso();
     } else {
       const nextAttempt = attempt.attempt + 1;
-      await trackAgent({
-        session,
-        store,
-        agent: "designer",
-        attempt: nextAttempt,
-        startMessage: "Adapting the intervention from the remaining difficulty.",
-        run: () =>
-          runLearningDesignerAgent({
-            diagnosis: session.diagnosis,
-            report: session.diagnostic.report,
-            attempt: nextAttempt,
-            ai,
-            curriculum: session.curriculum,
-            remainingDifficulty: masteryResult.remainingDifficulty,
-          }),
-        onData: (data) => {
-          const newAttempt = buildAttempt(nextAttempt, data);
-          session.attempts.push(newAttempt);
-          session.attempt = nextAttempt;
-        },
-        completedMessage: "Adapted intervention ready.",
-        summary: designSummary,
-      });
+      const alreadyAdapted = session.attempts.some((item) => item.attempt === nextAttempt);
+
+      if (!alreadyAdapted) {
+        await trackAgent({
+          session,
+          store,
+          agent: "designer",
+          attempt: nextAttempt,
+          startMessage: "Adapting the intervention from the remaining difficulty.",
+          run: () =>
+            runLearningDesignerAgent({
+              diagnosis: session.diagnosis,
+              report: session.diagnostic.report,
+              attempt: nextAttempt,
+              ai,
+              curriculum: session.curriculum,
+              remainingDifficulty: masteryResult.remainingDifficulty,
+            }),
+          onData: (data) => {
+            const newAttempt = buildAttempt(nextAttempt, data);
+            session.attempts.push(newAttempt);
+            session.attempt = nextAttempt;
+          },
+          completedMessage: "Adapted intervention ready.",
+          summary: designSummary,
+        });
+      }
 
       session.status = "retry";
     }
 
+    session.error = null;
     session.updatedAt = nowIso();
     session.lastActivityAt = nowIso();
     await store.replaceSession(session);

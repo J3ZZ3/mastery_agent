@@ -98,6 +98,7 @@ export default function StudentLearning() {
       load(true).catch(() => {});
     } catch (submitError) {
       notify(submitError.message || "Could not analyse the diagnostic.", "error");
+      load(true).catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -147,6 +148,7 @@ export default function StudentLearning() {
       load(true).catch(() => {});
     } catch (submitError) {
       notify(submitError.message || "Could not complete the practice set.", "error");
+      load(true).catch(() => {});
     } finally {
       setBusy(false);
     }
@@ -165,6 +167,7 @@ export default function StudentLearning() {
       load(true).catch(() => {});
     } catch (submitError) {
       notify(submitError.message || "Could not evaluate the mastery check.", "error");
+      load(true).catch(() => {});
     } finally {
       setBusy(false);
     }
