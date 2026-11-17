@@ -57,18 +57,18 @@ const readErrorDetail = async (response) => {
 };
 
 /** How long to wait before retrying a rate-limited request. */
-const retryDelayMs = (response, detail, attempt) => {
+const retryDelayMs = (response, detail, attempt, capMs = 90000) => {
   const header = Number(response.headers.get("retry-after"));
   if (Number.isFinite(header) && header > 0) {
-    return Math.min(header * 1000 + 500, 65000);
+    return Math.min(header * 1000 + 500, capMs);
   }
 
   const seconds = Number(detail.match(/try again in ([\d.]+)s/i)?.[1]);
   if (Number.isFinite(seconds) && seconds > 0) {
-    return Math.min(seconds * 1000 + 1500, 90000);
+    return Math.min(seconds * 1000 + 1500, capMs);
   }
 
-  return Math.min(3000 * 2 ** attempt, 30000);
+  return Math.min(3000 * 2 ** attempt, capMs);
 };
 
 /**
@@ -93,6 +93,7 @@ export const createOpenAiCompatibleProvider = ({
   timeoutMs,
   maxRetries = 12,
   maxTokens = 900,
+  retryDelayCapMs = 90000,
 }) => ({
   id,
   label,
@@ -241,7 +242,7 @@ export const createOpenAiCompatibleProvider = ({
         }
 
         if (retryableStatus && attempt < maxRetries) {
-          const wait = response.status === 429 ? retryDelayMs(response, detail, attempt) : retryDelayMs(response, detail, attempt);
+          const wait = retryDelayMs(response, detail, attempt, retryDelayCapMs);
           await sleep(wait);
           continue;
         }

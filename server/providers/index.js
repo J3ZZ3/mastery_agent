@@ -29,13 +29,16 @@ const unconfiguredProvider = {
 export const providerStatus = () => {
   if (requested === "groq") {
     const configured = Boolean(config.groq.apiKey);
+    const models = config.groq.models || [config.groq.model];
     return {
       active: "groq",
       requested,
-      label: `Groq · ${config.groq.model}`,
+      label: models.length > 1 ? `Groq · ${models.join(" → ")}` : `Groq · ${config.groq.model}`,
       aiConfigured: configured,
       note: configured
-        ? "Every agent calls Groq live. There is no deterministic fallback."
+        ? models.length > 1
+          ? "Every agent calls Groq live and falls back through the configured model chain if one is rate-limited. There is no deterministic fallback."
+          : "Every agent calls Groq live. There is no deterministic fallback."
         : "AI_PROVIDER=groq but GROQ_API_KEY is missing. Agent calls will fail until the key is set.",
     };
   }

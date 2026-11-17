@@ -62,6 +62,19 @@ export const config = {
     apiKey: process.env.GROQ_API_KEY || "",
     baseUrl: (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/$/, ""),
     model: process.env.GROQ_MODEL || "qwen/qwen3.8-27b",
+    // Ordered fallback chain. The primary model is tried first; if it is
+    // rate-limited or errors, the next model is tried automatically. Keep the
+    // chain short so a failed run fails fast instead of retrying for minutes.
+    models: (() => {
+      const primary = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+      const extra = String(process.env.GROQ_MODEL_FALLBACKS || "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      return [...new Set([primary, ...extra])];
+    })(),
+    // Per-model retry count before moving to the next model in the chain.
+    fallbackRetries: asNumber(process.env.GROQ_FALLBACK_RETRIES, 1),
     timeoutMs: asNumber(process.env.GROQ_TIMEOUT_MS, 60000),
     // Free-tier Groq models have a low output-tokens-per-minute cap. qwen
     // (1000 OTPM) cannot fit the intervention JSON, while gpt-oss models can.

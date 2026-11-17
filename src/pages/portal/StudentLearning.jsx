@@ -103,6 +103,27 @@ export default function StudentLearning() {
     }
   };
 
+  const retryDiagnostic = async (answers) => {
+    if (!session?.id) return;
+    setBusy(true);
+    try {
+      const data = await api.submitStudentDiagnostic(
+        session.id,
+        answers || session.diagnostic?.answers || {},
+      );
+      applySession(data.session);
+      notify("Analysis finished. Your personalised lesson is ready.", "success");
+    } catch (retryError) {
+      notify(
+        retryError.message || "The analysis could not finish. Your answers are saved — try again in a moment.",
+        "error",
+      );
+    } finally {
+      setBusy(false);
+      load(true).catch(() => {});
+    }
+  };
+
   const checkPractice = async (questionId, answer) => {
     try {
       const data = await api.checkStudentPractice(session.id, questionId, answer);
@@ -161,6 +182,7 @@ export default function StudentLearning() {
       onRefresh={() => load(true)}
       onStart={startSession}
       onSubmitDiagnostic={submitDiagnostic}
+      onRetryDiagnostic={retryDiagnostic}
       onCheckPractice={checkPractice}
       onFinishPractice={finishPractice}
       onSubmitMastery={submitMastery}

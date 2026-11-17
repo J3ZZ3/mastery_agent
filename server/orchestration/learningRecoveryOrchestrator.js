@@ -199,86 +199,107 @@ export async function createLearningSession({ learnerId, restart = false }, stor
 export async function submitDiagnostic(sessionId, answers, store = demoSessionStore) {
   const session = await store.findSession(sessionId);
   if (!session) throw new AppError(404, "Learning session not found.");
-  if (session.diagnostic.report) return session;
-  if (session.status !== "diagnostic") {
+
+  // Once the cycle has moved past analysis, resubmitting is a no-op.
+  if (["learning", "retry", "mastery", "complete", "abandoned"].includes(session.status)) {
+    return session;
+  }
+
+  const retrying = session.status === "error";
+  if (session.status !== "diagnostic" && !retrying) {
     throw new AppError(409, "This diagnostic has already been submitted.");
   }
 
-  validateAllAnswered(session.diagnostic.questions, answers, "diagnostic");
+  // On a retry the learner keeps the answers they already gave; they do not
+  // have to redo the diagnostic. Any newly submitted answers are merged in.
+  const effectiveAnswers = retrying
+    ? { ...(session.diagnostic.answers || {}), ...answers }
+    : answers;
 
-  session.diagnostic.answers = answers;
-  session.diagnostic.submittedAt = nowIso();
+  validateAllAnswered(session.diagnostic.questions, effectiveAnswers, "diagnostic");
+
+  session.diagnostic.answers = effectiveAnswers;
+  session.diagnostic.submittedAt = session.diagnostic.submittedAt || nowIso();
   session.status = "analyzing";
+  session.error = null;
   session.updatedAt = nowIso();
   await store.replaceSession(session);
 
   try {
-    await trackAgent({
-      session,
-      store,
-      agent: "assessment",
-      attempt: 1,
-      startMessage: "Analysing the submitted diagnostic answers.",
-      run: () =>
-        runAssessmentAgent({
-          questions: session.diagnostic.questions,
-          answers,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        session.diagnostic.report = data;
-      },
-      completedMessage: "Assessment analysed.",
-      summary: assessmentSummary,
-    });
+    // Resume from the first step that has not completed yet, so a retry does
+    // not repeat (or re-pay for) an agent that already produced its result.
+    if (!session.diagnostic.report) {
+      await trackAgent({
+        session,
+        store,
+        agent: "assessment",
+        attempt: 1,
+        startMessage: "Analysing the submitted diagnostic answers.",
+        run: () =>
+          runAssessmentAgent({
+            questions: session.diagnostic.questions,
+            answers: effectiveAnswers,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          session.diagnostic.report = data;
+        },
+        completedMessage: "Assessment analysed.",
+        summary: assessmentSummary,
+      });
+    }
 
-    await trackAgent({
-      session,
-      store,
-      agent: "diagnostic",
-      attempt: 1,
-      startMessage: "Looking for a prerequisite gap behind the errors.",
-      run: () =>
-        runDiagnosticAgent({
-          report: session.diagnostic.report,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        session.diagnosis = data;
-      },
-      completedMessage: "Diagnostic hypothesis formed.",
-      summary: diagnosisSummary,
-    });
+    if (!session.diagnosis) {
+      await trackAgent({
+        session,
+        store,
+        agent: "diagnostic",
+        attempt: 1,
+        startMessage: "Looking for a prerequisite gap behind the errors.",
+        run: () =>
+          runDiagnosticAgent({
+            report: session.diagnostic.report,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          session.diagnosis = data;
+        },
+        completedMessage: "Diagnostic hypothesis formed.",
+        summary: diagnosisSummary,
+      });
 
-    // Refine book context now that we know the suspected gap/topic.
-    session.curriculum = await getCurriculumContextForSession(session, store, {
-      gapKey: session.diagnosis?.gapKey,
-      diagnosis: session.diagnosis,
-    });
+      // Refine book context now that we know the suspected gap/topic.
+      session.curriculum = await getCurriculumContextForSession(session, store, {
+        gapKey: session.diagnosis?.gapKey,
+        diagnosis: session.diagnosis,
+      });
+    }
 
-    await trackAgent({
-      session,
-      store,
-      agent: "designer",
-      attempt: 1,
-      startMessage: "Designing a personalised intervention.",
-      run: () =>
-        runLearningDesignerAgent({
-          diagnosis: session.diagnosis,
-          report: session.diagnostic.report,
-          attempt: 1,
-          ai,
-          curriculum: session.curriculum,
-        }),
-      onData: (data) => {
-        session.attempts = [buildAttempt(1, data)];
-        session.attempt = 1;
-      },
-      completedMessage: "Intervention ready.",
-      summary: designSummary,
-    });
+    if (!session.attempts?.[0]?.intervention) {
+      await trackAgent({
+        session,
+        store,
+        agent: "designer",
+        attempt: 1,
+        startMessage: "Designing a personalised intervention.",
+        run: () =>
+          runLearningDesignerAgent({
+            diagnosis: session.diagnosis,
+            report: session.diagnostic.report,
+            attempt: 1,
+            ai,
+            curriculum: session.curriculum,
+          }),
+        onData: (data) => {
+          session.attempts = [buildAttempt(1, data)];
+          session.attempt = 1;
+        },
+        completedMessage: "Intervention ready.",
+        summary: designSummary,
+      });
+    }
 
     session.status = "learning";
     session.updatedAt = nowIso();

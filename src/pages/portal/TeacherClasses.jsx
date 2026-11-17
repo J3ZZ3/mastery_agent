@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArchiveRestore, ArrowRight, BookOpen, MailCheck, Plus, RefreshCw, Users } from "lucide-react";
+import { AlertTriangle, ArchiveRestore, ArrowRight, BookOpen, Plus, RefreshCw, Users } from "lucide-react";
 import { api } from "../../lib/api.js";
 import { useApp } from "../../context/AppContext.jsx";
 import { useAuth } from "../../context/AuthContext.jsx";
@@ -33,7 +33,6 @@ export default function TeacherClasses() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState("");
-  const [sendingVerification, setSendingVerification] = useState(false);
   const [restoringId, setRestoringId] = useState(null);
 
   const load = useCallback(async () => {
@@ -109,24 +108,6 @@ export default function TeacherClasses() {
     }
   };
 
-  const resendVerification = async () => {
-    setSendingVerification(true);
-    try {
-      const result = await api.resendTeacherVerification();
-      notify(
-        result.alreadyVerified
-          ? "Your email is already verified."
-          : "Verification email sent. Check your inbox.",
-        "success",
-      );
-      await refresh();
-    } catch (err) {
-      notify(err.message || "Could not send the verification email.", "error");
-    } finally {
-      setSendingVerification(false);
-    }
-  };
-
   const restore = async (classroom) => {
     setRestoringId(classroom.id);
     try {
@@ -196,27 +177,6 @@ export default function TeacherClasses() {
           tone="slate"
         />
       </div>
-
-      {user?.teacher && !user.teacher.emailVerified ? (
-        <Alert tone="warning" title="Verify your email address">
-          <div className="space-y-3">
-            <p>
-              We sent a verification link to{" "}
-              <span className="font-semibold text-amber-900">{user.teacher.email}</span>. Verifying makes
-              account recovery safer and lets us contact you about your classes.
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              icon={MailCheck}
-              loading={sendingVerification}
-              onClick={resendVerification}
-            >
-              Resend verification email
-            </Button>
-          </div>
-        </Alert>
-      ) : null}
 
       {plan && (plan.studentBook || plan.teachersGuide) ? (
         <Alert tone="success" title="Documents uploaded">

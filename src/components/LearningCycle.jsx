@@ -167,6 +167,7 @@ export default function LearningCycle({
   onRefresh,
   onStart,
   onSubmitDiagnostic,
+  onRetryDiagnostic,
   onCheckPractice,
   onFinishPractice,
   onSubmitMastery,
@@ -410,15 +411,47 @@ export default function LearningCycle({
       );
     }
 
+    if (busy && session.status === "error" && !session.attempts?.length) {
+      return (
+        <AnalysisCard
+          session={{ ...session, status: "analyzing", error: null }}
+          onRefresh={onRefresh}
+          busy={busy}
+          liveEvents={liveEvents}
+        />
+      );
+    }
+
     if (session.status === "error") {
+      const savedAnswers = session.diagnostic?.answers || {};
+      const canRetryAnalysis =
+        !session.attempts?.length &&
+        Boolean(session.diagnostic?.submittedAt) &&
+        Object.keys(savedAnswers).length > 0;
+
       return (
         <div className="space-y-4">
-          <Alert tone="error" title="This cycle stopped before it finished">
-            {session.error || "An agent step failed. You can restart the cycle."}
+          <Alert tone="error" title="The analysis stopped before it finished">
+            {session.error || "An agent step failed."}
+            {canRetryAnalysis
+              ? " Your answers are saved, so you do not need to redo the diagnostic."
+              : " You can restart the cycle."}
           </Alert>
-          <Button variant="danger" icon={RotateCcw} onClick={() => onStart(true)} loading={busy}>
-            Restart the diagnostic
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            {canRetryAnalysis ? (
+              <Button
+                variant="mint"
+                icon={RefreshCw}
+                onClick={() => onRetryDiagnostic?.(savedAnswers)}
+                loading={busy}
+              >
+                Try the analysis again
+              </Button>
+            ) : null}
+            <Button variant="secondary" icon={RotateCcw} onClick={() => onStart(true)} loading={busy}>
+              {canRetryAnalysis ? "Start a new diagnostic instead" : "Restart the diagnostic"}
+            </Button>
+          </div>
         </div>
       );
     }
