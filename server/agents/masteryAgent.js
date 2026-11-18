@@ -132,6 +132,7 @@ export async function runMasteryEvaluationAgent({
     schema: masteryResultSchema,
     example: groundTruth,
     latencyMs,
+    maxTokens: 1400,
     label: "Mastery Agent",
     instructions: [
       "Evaluate the follow-up assessment against the explicit threshold. Compare with the initial score. A failed attempt should identify what remains difficult, not describe the learner as failing.",

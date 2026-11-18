@@ -387,6 +387,31 @@ function normalizePracticeQuestions(generated, fallback = [], attempt = 1) {
   });
 }
 
+/**
+ * Send only the evidence the designer needs. Correct items add input tokens
+ * (and free-tier rate-limit pressure) without changing the lesson.
+ */
+function compactReport(report) {
+  if (!report) return null;
+  return {
+    totalQuestions: report.totalQuestions,
+    correctAnswers: report.correctAnswers,
+    incorrectAnswers: report.incorrectAnswers,
+    scorePercent: report.scorePercent,
+    identifiedPatterns: report.identifiedPatterns,
+    items: (report.items || [])
+      .filter((item) => !item.correct)
+      .map(({ questionId, prompt, learnerAnswer, correctAnswer, skill, misconception }) => ({
+        questionId,
+        prompt,
+        learnerAnswer,
+        correctAnswer,
+        skill,
+        misconception,
+      })),
+  };
+}
+
 export async function runLearningDesignerAgent({
   diagnosis,
   report = null,
@@ -396,12 +421,27 @@ export async function runLearningDesignerAgent({
   remainingDifficulty = "",
   curriculum = null,
 }) {
-  const example = buildIntervention({ diagnosis, report, gapKey: diagnosis?.gapKey, attempt, remainingDifficulty, curriculum });
+  const focusedReport = compactReport(report);
+  const example = buildIntervention({ diagnosis, report: focusedReport, gapKey: diagnosis?.gapKey, attempt, remainingDifficulty, curriculum });
+
+  // The prompt only needs the JSON shape. A full personalised example is
+  // expensive, so show a trimmed version while keeping the full one as the
+  // fallback for any field the model omits.
+  const shapeExample = {
+    ...example,
+    sections: example.sections.slice(0, 2),
+    workedExamples: example.workedExamples.slice(0, 2).map((item) => ({
+      ...item,
+      steps: item.steps.slice(0, 2),
+    })),
+    practiceQuestions: example.practiceQuestions.slice(0, 2),
+  };
 
   const { data, meta } = await ai.generateJSON({
     schema: interventionModelSchema,
-    example,
+    example: shapeExample,
     latencyMs,
+    maxTokens: 1800,
     label: "Learning Designer Agent",
     instructions: [
       "Design a short, concrete intervention that is PERSONALISED to this learner's specific evidence.",
@@ -418,7 +458,7 @@ export async function runLearningDesignerAgent({
     ]
       .filter(Boolean)
       .join("\n"),
-    payload: { diagnosis, report, attempt, remainingDifficulty, threshold: 80, curriculum },
+    payload: { diagnosis, report: focusedReport, attempt, remainingDifficulty, threshold: 80, curriculum },
   });
 
   return {

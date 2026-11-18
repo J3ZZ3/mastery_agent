@@ -493,7 +493,10 @@ export default function LearningCycle({
       const canRetryPractice =
         !canRetryMastery && !canResumeAdapted && Boolean(practice) && Object.keys(savedPractice).length > 0;
 
-      const recovery = canRetryAnalysis
+      const lastFailure = [...(session.events || [])].reverse().find((event) => event.status === "failed");
+      const failedAgent = lastFailure?.agent || null;
+
+      let recovery = canRetryAnalysis
         ? {
             title: "The analysis stopped before it finished",
             body: "Your diagnostic answers are saved, so you do not need to redo the assessment.",
@@ -522,6 +525,30 @@ export default function LearningCycle({
                   onClick: () => onFinishPractice?.(savedPractice),
                 }
               : null;
+
+      // The recovery action is correct either way, but name the step that
+      // actually failed so the learner is not told the wrong thing.
+      if (recovery && failedAgent === "designer" && mastery?.result) {
+        recovery = {
+          ...recovery,
+          title: "The adapted lesson stopped before it was ready",
+          body: "Your mastery result is saved. The Learning Designer Agent only needs to finish the adapted lesson.",
+          label: "Try the adapted lesson again",
+        };
+      } else if (recovery && failedAgent === "insight") {
+        recovery = {
+          ...recovery,
+          title: "The teacher summary stopped before it finished",
+          body: "Your mastery result is saved. The final summary only needs to be written.",
+          label: "Finish the cycle",
+        };
+      } else if (recovery && failedAgent === "mastery" && mastery?.result) {
+        recovery = {
+          ...recovery,
+          title: "The mastery check stopped before it finished",
+          body: "Your mastery answers are saved, so you do not need to redo the check.",
+        };
+      }
 
       return (
         <div className="space-y-4">

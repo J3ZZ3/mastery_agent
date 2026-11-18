@@ -56,6 +56,12 @@ test("OpenAI provider sends a server-side request and returns validated model ou
   assert.equal(received.body.model, "local-test-model");
 });
 
+test("a per-call maxTokens cap overrides the provider default", async () => {
+  behavior = "valid";
+  await openaiProvider.generateJSON({ ...args, maxTokens: 1400 });
+  assert.equal(received.body.max_tokens, 1400);
+});
+
 test("an invalid model response throws instead of returning the example", async () => {
   behavior = "invalid";
   await assert.rejects(

@@ -147,6 +147,7 @@ export async function runDiagnosticAgent({ report, ai, latencyMs = 0, curriculum
     schema: diagnosticModelSchema,
     example,
     latencyMs,
+    maxTokens: 1400,
     label: "Diagnostic Agent",
     instructions: [
       "Form a hypothesis, not a verdict. Your output must be SPECIFIC to the submitted answers.",

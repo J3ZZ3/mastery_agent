@@ -67,6 +67,7 @@ export async function runTutorAgent({ intervention, answers, ai, latencyMs = 0, 
     schema: tutorResultSchema,
     example: groundTruth,
     latencyMs,
+    maxTokens: 1800,
     label: "Tutor Agent",
     instructions: [
       "Evaluate the practice answers. Feedback must be supportive, specific and must not reward an incorrect answer. Do not label the learner. Use the supplied explanations rather than inventing new mathematics.",

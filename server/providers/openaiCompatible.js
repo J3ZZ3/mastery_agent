@@ -98,12 +98,16 @@ export const createOpenAiCompatibleProvider = ({
   id,
   label,
 
-  async generateJSON({ schema, example, instructions, payload, label: agentLabel }) {
+  async generateJSON({ schema, example, instructions, payload, label: agentLabel, maxTokens: callMaxTokens }) {
     if (!apiKey) {
       throw new ProviderError(
         `${id} is selected but no API key is configured. Add the key to .env and restart the server.`,
       );
     }
+
+    // Small structured outputs do not need the full output budget. Asking for
+    // fewer completion tokens keeps each call inside a free-tier TPM window.
+    const tokenCap = callMaxTokens || maxTokens;
 
     const startedAt = Date.now();
     const systemContent = [
@@ -125,7 +129,7 @@ export const createOpenAiCompatibleProvider = ({
     const baseBody = {
       model,
       temperature: 0.2,
-      max_tokens: maxTokens,
+      max_tokens: tokenCap,
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: userContent },
@@ -231,8 +235,8 @@ export const createOpenAiCompatibleProvider = ({
         // Output-token cap errors won't resolve by waiting alone; retry once with
         // a smaller cap if possible.
         if (outputTooLarge && attempt === 0) {
-          const reduced = Math.max(512, Math.floor(maxTokens * 0.7));
-          if (reduced < maxTokens) {
+          const reduced = Math.max(512, Math.floor(tokenCap * 0.7));
+          if (reduced < tokenCap) {
             attempts[mode].body.max_tokens = reduced;
             // also apply to other mode
             for (const a of attempts) a.body.max_tokens = reduced;

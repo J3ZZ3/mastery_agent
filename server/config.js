@@ -1,6 +1,9 @@
 import "dotenv/config";
 
 const asNumber = (value, fallback) => {
+  // An empty environment variable (e.g. GROQ_FALLBACK_RETRIES=) must keep the
+  // default, not silently become 0.
+  if (value === undefined || value === null || String(value).trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };

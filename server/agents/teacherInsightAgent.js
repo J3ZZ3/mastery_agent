@@ -68,6 +68,7 @@ export async function runTeacherInsightAgent({ learner, session, ai, latencyMs =
     schema: teacherInsightSchema,
     example,
     latencyMs,
+    maxTokens: 1400,
     label: "Teacher Insight Agent",
     instructions: [
       "Write a concise teacher-facing summary from the recorded cycle. It must cite real scores, celebrate improvement where present, recommend a next step, and avoid labelling the learner. The teacher retains the decision.",
