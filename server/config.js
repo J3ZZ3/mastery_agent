@@ -82,6 +82,12 @@ export const config = {
     // Free-tier Groq models have a low output-tokens-per-minute cap. qwen
     // (1000 OTPM) cannot fit the intervention JSON, while gpt-oss models can.
     maxTokens: asNumber(process.env.GROQ_MAX_TOKENS, 900),
+    // gpt-oss models are reasoning models. Left at their default effort they
+    // spend most of the completion budget on internal reasoning, which both
+    // breaks JSON-mode validation and burns the per-minute token allowance.
+    // Low effort keeps structured output valid and fast. Models that do not
+    // support the field are sent without it.
+    reasoningEffort: process.env.GROQ_REASONING_EFFORT || "low",
   },
 
   // Optional OpenAI-compatible endpoint, kept so the same code can point at

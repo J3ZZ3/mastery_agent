@@ -16,6 +16,11 @@ export class ProviderError extends Error {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Below this many completion tokens a structured response is likely to be cut
+// off mid-JSON, which costs another full request. Waiting for the window is
+// cheaper than sending a request that cannot produce valid output.
+const MIN_OUTPUT_TOKENS = 700;
+
 const extractJson = (content) => {
   if (typeof content !== "string") {
     throw new ProviderError("The AI provider returned an empty response.");
@@ -72,6 +77,19 @@ const retryDelayMs = (response, detail, attempt, capMs = 90000) => {
 };
 
 /**
+ * Groq reports its per-minute budget in the 429 body, e.g.
+ * "Limit 8000, Used 5878, Requested 3627". Knowing what is actually left lets
+ * us shrink the request instead of retrying a call that can never fit.
+ */
+const parseRateLimit = (detail) => {
+  const limit = Number(detail.match(/Limit\s+(\d+)/i)?.[1]);
+  const used = Number(detail.match(/Used\s+(\d+)/i)?.[1]);
+  const requested = Number(detail.match(/Requested\s+(\d+)/i)?.[1]);
+  if (!Number.isFinite(limit) || !Number.isFinite(used) || limit <= 0) return null;
+  return { limit, used, requested: Number.isFinite(requested) ? requested : null, available: Math.max(0, limit - used) };
+};
+
+/**
  * Build a strict OpenAI-compatible chat-completions provider (Groq, OpenAI,
  * or any compatible endpoint).
  *
@@ -94,6 +112,7 @@ export const createOpenAiCompatibleProvider = ({
   maxRetries = 12,
   maxTokens = 900,
   retryDelayCapMs = 90000,
+  reasoningEffort = null,
 }) => ({
   id,
   label,
@@ -130,16 +149,28 @@ export const createOpenAiCompatibleProvider = ({
       model,
       temperature: 0.2,
       max_tokens: tokenCap,
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [
         { role: "system", content: systemContent },
         { role: "user", content: userContent },
       ],
     };
 
+    // The prompt is fixed for this call, so only the completion budget can be
+    // trimmed when the provider's remaining window is small. Estimate
+    // conservatively (JSON tokenises closer to 3.4 chars/token than 4).
+    const promptTokens = Math.ceil((systemContent.length + userContent.length) / 3.4);
+
     const attempts = [
       { body: { ...baseBody, response_format: { type: "json_object" } } },
       { body: { ...baseBody } },
     ];
+
+    let activeCap = tokenCap;
+    const setCap = (value) => {
+      activeCap = value;
+      for (const attempt of attempts) attempt.body.max_tokens = value;
+    };
 
     for (let mode = 0; mode < attempts.length; mode += 1) {
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
@@ -232,20 +263,39 @@ export const createOpenAiCompatibleProvider = ({
           );
         }
 
+        // A per-minute token budget is shared by every request in the window.
+        // When the provider says this call is bigger than what is left,
+        // retrying the same size cannot succeed (and the rejected request itself
+        // adds pressure). Shrink once to what actually fits, otherwise fail over
+        // immediately. Request-rate (RPM) limits are left to the normal backoff.
+        const tokenLimited = response.status === 429 && /tokens per minute|\bTPM\b/i.test(detail);
+        const rate = tokenLimited ? parseRateLimit(detail) : null;
+        let budgetBlocked = false;
+        if (rate) {
+          const requested = rate.requested ?? promptTokens + activeCap;
+          if (requested > rate.available) {
+            const fit = rate.available - promptTokens - 32;
+            if (fit >= MIN_OUTPUT_TOKENS && fit < activeCap) {
+              setCap(Math.floor(fit));
+              await sleep(500);
+              continue;
+            }
+            budgetBlocked = true;
+          }
+        }
+
         // Output-token cap errors won't resolve by waiting alone; retry once with
         // a smaller cap if possible.
         if (outputTooLarge && attempt === 0) {
-          const reduced = Math.max(512, Math.floor(tokenCap * 0.7));
-          if (reduced < tokenCap) {
-            attempts[mode].body.max_tokens = reduced;
-            // also apply to other mode
-            for (const a of attempts) a.body.max_tokens = reduced;
+          const reduced = Math.max(MIN_OUTPUT_TOKENS, Math.floor(activeCap * 0.7));
+          if (reduced < activeCap) {
+            setCap(reduced);
             await sleep(1000);
             continue;
           }
         }
 
-        if (retryableStatus && attempt < maxRetries) {
+        if (retryableStatus && attempt < maxRetries && !budgetBlocked) {
           const wait = retryDelayMs(response, detail, attempt, retryDelayCapMs);
           await sleep(wait);
           continue;

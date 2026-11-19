@@ -12,6 +12,10 @@ import { createOpenAiCompatibleProvider, ProviderError } from "./openaiCompatibl
  */
 const models = config.groq.models || [config.groq.model];
 
+// Only the gpt-oss models accept `reasoning_effort`; sending it to a
+// non-reasoning model is rejected by Groq.
+const supportsReasoningEffort = (model) => /gpt-oss/i.test(model);
+
 const providers = models.map((model) =>
   createOpenAiCompatibleProvider({
     id: "groq",
@@ -22,6 +26,7 @@ const providers = models.map((model) =>
     timeoutMs: config.groq.timeoutMs,
     maxTokens: config.groq.maxTokens,
     maxRetries: config.groq.fallbackRetries,
+    reasoningEffort: supportsReasoningEffort(model) ? config.groq.reasoningEffort : null,
     // Groq's TPM limit is per model and clears on a rolling window. Honour its
     // retry hint (often 10-30s) instead of giving up early and burning the
     // next model's budget too.

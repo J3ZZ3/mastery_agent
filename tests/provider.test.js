@@ -5,9 +5,11 @@ import { z } from "zod";
 
 let behavior = "valid";
 let received;
+let requestCount = 0;
 const server = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
+  requestCount += 1;
   received = { url: req.url, authorization: req.headers.authorization, body: JSON.parse(body) };
   if (behavior === "timeout") {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -18,6 +20,18 @@ const server = createServer(async (req, res) => {
   if (behavior === "http-error") {
     res.writeHead(401);
     res.end("sensitive provider response");
+    return;
+  }
+  if (behavior === "rate-blocked" || (behavior === "rate-shrink" && requestCount === 1)) {
+    res.writeHead(429, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      error: {
+        message:
+          behavior === "rate-blocked"
+            ? "Rate limit reached for model `test` in organization `org` on tokens per minute (TPM): Limit 8000, Used 7900, Requested 3000."
+            : "Rate limit reached for model `test` in organization `org` on tokens per minute (TPM): Limit 8000, Used 7000, Requested 1200.",
+      },
+    }));
     return;
   }
   res.writeHead(200, { "Content-Type": "application/json" });
@@ -60,6 +74,27 @@ test("a per-call maxTokens cap overrides the provider default", async () => {
   behavior = "valid";
   await openaiProvider.generateJSON({ ...args, maxTokens: 1400 });
   assert.equal(received.body.max_tokens, 1400);
+});
+
+test("a rate limit that cannot fit the request fails fast instead of retrying", async () => {
+  behavior = "rate-blocked";
+  requestCount = 0;
+  await assert.rejects(
+    () => openaiProvider.generateJSON({ ...args, maxTokens: 1400 }),
+    (error) => error instanceof ProviderError && /HTTP 429/.test(error.message),
+  );
+  // Retrying a request that is larger than the remaining window only adds
+  // pressure, so exactly one attempt is made.
+  assert.equal(requestCount, 1);
+});
+
+test("a rate limit shrinks the completion budget to what is left in the window", async () => {
+  behavior = "rate-shrink";
+  requestCount = 0;
+  const result = await openaiProvider.generateJSON({ ...args, maxTokens: 1400 });
+  assert.equal(result.data.message, "from model");
+  assert.equal(requestCount, 2);
+  assert.ok(received.body.max_tokens < 1400);
 });
 
 test("an invalid model response throws instead of returning the example", async () => {
