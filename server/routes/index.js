@@ -31,6 +31,8 @@ apiRouter.get(
     res.json({
       status: "ok",
       app: "MASTERY",
+      // Render injects the deployed commit, so a stale deploy is visible here.
+      commit: process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 7) : null,
       provider: providerStatus(),
       database: databaseConfigured() ? "postgres" : "not-configured",
       threshold: config.masteryThreshold,

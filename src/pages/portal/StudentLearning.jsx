@@ -64,6 +64,19 @@ export default function StudentLearning() {
     );
   }, []);
 
+  // A student sign-in lasts 12 hours. If it expired while the page was open,
+  // send the learner back to sign in instead of leaving a stale error card —
+  // their saved answers stay on the server, so nothing has to be redone.
+  const needsSignIn = useCallback(
+    (requestError) => {
+      if (requestError?.status !== 401) return false;
+      notify("Your sign-in expired. Sign in again to continue — your answers are saved.", "error");
+      refresh();
+      return true;
+    },
+    [notify, refresh],
+  );
+
   const startSession = async (restart = false) => {
     setBusy(true);
     setError(null);
@@ -82,8 +95,10 @@ export default function StudentLearning() {
         "success",
       );
     } catch (startError) {
-      setError(startError.message || "Could not start your learning cycle.");
-      notify(startError.message || "Could not start your learning cycle.", "error");
+      if (!needsSignIn(startError)) {
+        setError(startError.message || "Could not start your learning cycle.");
+        notify(startError.message || "Could not start your learning cycle.", "error");
+      }
     } finally {
       setBusy(false);
     }
@@ -97,8 +112,10 @@ export default function StudentLearning() {
       notify("Diagnosis ready and a personalised lesson has been designed.", "success");
       load(true).catch(() => {});
     } catch (submitError) {
-      notify(submitError.message || "Could not analyse the diagnostic.", "error");
-      load(true).catch(() => {});
+      if (!needsSignIn(submitError)) {
+        notify(submitError.message || "Could not analyse the diagnostic.", "error");
+        load(true).catch(() => {});
+      }
     } finally {
       setBusy(false);
     }
@@ -115,10 +132,12 @@ export default function StudentLearning() {
       applySession(data.session);
       notify("Analysis finished. Your personalised lesson is ready.", "success");
     } catch (retryError) {
-      notify(
-        retryError.message || "The analysis could not finish. Your answers are saved — try again in a moment.",
-        "error",
-      );
+      if (!needsSignIn(retryError)) {
+        notify(
+          retryError.message || "The analysis could not finish. Your answers are saved — try again in a moment.",
+          "error",
+        );
+      }
     } finally {
       setBusy(false);
       load(true).catch(() => {});
@@ -130,7 +149,9 @@ export default function StudentLearning() {
       const data = await api.checkStudentPractice(session.id, questionId, answer);
       return data.check;
     } catch (checkError) {
-      notify(checkError.message || "Could not check that answer.", "error");
+      if (!needsSignIn(checkError)) {
+        notify(checkError.message || "Could not check that answer.", "error");
+      }
       return {
         correct: false,
         feedback: "The tutor could not check that answer.",
@@ -147,8 +168,10 @@ export default function StudentLearning() {
       notify("Practice reviewed. Your mastery check is ready — new questions, same skill.", "success");
       load(true).catch(() => {});
     } catch (submitError) {
-      notify(submitError.message || "Could not complete the practice set.", "error");
-      load(true).catch(() => {});
+      if (!needsSignIn(submitError)) {
+        notify(submitError.message || "Could not complete the practice set.", "error");
+        load(true).catch(() => {});
+      }
     } finally {
       setBusy(false);
     }
@@ -166,8 +189,10 @@ export default function StudentLearning() {
       }
       load(true).catch(() => {});
     } catch (submitError) {
-      notify(submitError.message || "Could not evaluate the mastery check.", "error");
-      load(true).catch(() => {});
+      if (!needsSignIn(submitError)) {
+        notify(submitError.message || "Could not evaluate the mastery check.", "error");
+        load(true).catch(() => {});
+      }
     } finally {
       setBusy(false);
     }
